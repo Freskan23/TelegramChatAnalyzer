@@ -1,0 +1,22 @@
+# Telegram Chat Analyzer - Dependencias
+# =====================================
+
+# Interfaz gráfica
+PyQt6>=6.4.0
+
+# Parsing HTML
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# APIs de IA
+google-genai>=0.3.0
+openai>=1.0.0
+
+# Base de datos (incluida en Python)
+# sqlite3 - built-in
+
+# Utilidades
+requests>=2.28.0
+
+# Empaquetado como .exe (solo para desarrollo)
+pyinstaller>=6.0.0
