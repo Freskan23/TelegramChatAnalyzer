@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2805,17 +2805,22 @@ class MainWindow(QMainWindow):
             self._load_my_profile()
             
     def _load_my_profile(self):
-        # Clear existing content
-        self._clear_layout(self.profile_layout)
+        # Clear existing content completely
+        while self.profile_layout.count():
+            item = self.profile_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
         
         me = self.db.get_me()
         if not me:
-            self.profile_empty = EmptyState(
+            empty_state = EmptyState(
                 "👤",
                 "Selecciona tu usuario",
                 "Elige tu nombre del selector para ver tu evaluación personal.",
             )
-            self.profile_layout.addWidget(self.profile_empty)
+            self.profile_layout.addWidget(empty_state)
             return
             
         me_data = self.db.get_person_with_skills(me['id'])
@@ -3137,6 +3142,8 @@ class MainWindow(QMainWindow):
             item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
                 
     def _import_chat(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -3381,37 +3388,39 @@ class MainWindow(QMainWindow):
     def _show_person_detail(self, person: dict):
         person_data = self.db.get_person_with_skills(person['id'])
         person_stats = self.db.get_person_stats(person['id'])
+        person_tasks = self.db.get_tasks_for_person(person['id'])
+        me = self.db.get_me()
         
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Perfil: {person['name']}")
-        dialog.setMinimumSize(600, 700)
+        dialog.setMinimumSize(900, 700)
         dialog.setStyleSheet(GLOBAL_STYLE + f"QDialog {{ background-color: {COLORS['bg_primary']}; }}")
         
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(24)
-        layout.setContentsMargins(32, 32, 32, 32)
+        main_layout = QVBoxLayout(dialog)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(32, 32, 32, 32)
         
-        # Header
+        # Header compacto
         header = QHBoxLayout()
         role_colors = ROLE_COLORS.get(person.get('role', 'desconocido').lower(), ROLE_COLORS['desconocido'])
         
         avatar = QLabel(person['name'][0].upper())
-        avatar.setFixedSize(80, 80)
+        avatar.setFixedSize(60, 60)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setStyleSheet(f"""
             background-color: {role_colors[1]};
             color: {role_colors[0]};
-            border-radius: 40px;
-            font-size: 32px;
+            border-radius: 30px;
+            font-size: 24px;
             font-weight: 700;
         """)
         header.addWidget(avatar)
         
         info = QVBoxLayout()
-        info.setSpacing(8)
+        info.setSpacing(4)
         
         name_label = QLabel(person['name'])
-        name_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 24px; font-weight: 700;")
+        name_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 20px; font-weight: 700;")
         info.addWidget(name_label)
         
         role_badge = QLabel(person.get('role', 'Desconocido').capitalize())
@@ -3420,7 +3429,7 @@ class MainWindow(QMainWindow):
             color: {role_colors[0]};
             padding: 4px 12px;
             border-radius: 6px;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
         """)
         role_badge.setFixedWidth(role_badge.sizeHint().width() + 8)
@@ -3428,67 +3437,236 @@ class MainWindow(QMainWindow):
         
         header.addLayout(info)
         header.addStretch()
-        layout.addLayout(header)
         
-        # Stats
-        stats_layout = QHBoxLayout()
+        # Stats compactos en header
         stats_data = [
-            (f"💬 {person_stats.get('total_messages', 0)}", "mensajes"),
-            (f"📋 {person_stats.get('total_tasks', 0)}", "tareas"),
-            (f"✅ {person_stats.get('completed_tasks', 0)}", "completadas"),
+            ("💬", str(person_stats.get('total_messages', 0)), "msgs"),
+            ("📋", str(person_stats.get('total_tasks', 0)), "tareas"),
+            ("✅", str(person_stats.get('completed_tasks', 0)), "hechas"),
         ]
-        for value, label in stats_data:
-            stat_frame = QFrame()
-            stat_frame.setStyleSheet(f"""
-                background-color: {COLORS['bg_secondary']};
-                border-radius: 10px;
-                padding: 12px;
-            """)
-            s_layout = QVBoxLayout(stat_frame)
-            s_layout.setSpacing(2)
-            
-            v_label = QLabel(value)
-            v_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 600;")
-            s_layout.addWidget(v_label)
-            
-            l_label = QLabel(label)
-            l_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
-            s_layout.addWidget(l_label)
-            
-            stats_layout.addWidget(stat_frame)
-        stats_layout.addStretch()
-        layout.addLayout(stats_layout)
+        for icon, value, label in stats_data:
+            stat_box = QVBoxLayout()
+            stat_box.setSpacing(0)
+            stat_value = QLabel(f"{icon} {value}")
+            stat_value.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 16px; font-weight: 600;")
+            stat_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_box.addWidget(stat_value)
+            stat_label = QLabel(label)
+            stat_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 10px;")
+            stat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_box.addWidget(stat_label)
+            header.addLayout(stat_box)
+            header.addSpacing(16)
         
-        # Summary
-        if person_data and person_data.get('profile_summary'):
-            summary_card = Card()
-            summary_layout = QVBoxLayout(summary_card)
-            summary_label = QLabel(person_data['profile_summary'])
-            summary_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 14px; line-height: 1.5;")
-            summary_label.setWordWrap(True)
-            summary_layout.addWidget(summary_label)
-            layout.addWidget(summary_card)
+        main_layout.addLayout(header)
+        
+        # Scroll area para contenido
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setSpacing(20)
+        
+        # === SECCIÓN DE TAREAS (PROMINENTE) ===
+        tasks_section = QFrame()
+        tasks_section.setStyleSheet(f"""
+            QFrame {{
+                background-color: #FFFFFF;
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 12px;
+            }}
+        """)
+        tasks_section_layout = QVBoxLayout(tasks_section)
+        tasks_section_layout.setSpacing(16)
+        tasks_section_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Header de tareas
+        tasks_header = QHBoxLayout()
+        tasks_title = QLabel(f"📋 Tareas de {person['name']}")
+        tasks_title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 16px; font-weight: 700;")
+        tasks_header.addWidget(tasks_title)
+        
+        pending_count = len([t for t in person_tasks if t['status'] != 'completed'])
+        if pending_count > 0:
+            pending_badge = QLabel(f"{pending_count} pendientes")
+            pending_badge.setStyleSheet("""
+                background-color: #FEF3C7;
+                color: #D97706;
+                padding: 4px 10px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: 600;
+            """)
+            tasks_header.addWidget(pending_badge)
+        tasks_header.addStretch()
+        tasks_section_layout.addLayout(tasks_header)
+        
+        # Lista de tareas de esta persona
+        if person_tasks:
+            for task in person_tasks[:8]:  # Mostrar hasta 8 tareas
+                task_item = QFrame()
+                task_item.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {COLORS['bg_secondary']};
+                        border-radius: 8px;
+                        border-left: 3px solid {'#10B981' if task['status'] == 'completed' else '#F59E0B' if task.get('priority') == 'high' else '#3B82F6'};
+                    }}
+                """)
+                task_layout = QHBoxLayout(task_item)
+                task_layout.setContentsMargins(12, 10, 12, 10)
+                
+                # Checkbox
+                checkbox = QLabel("✓" if task['status'] == 'completed' else "")
+                checkbox.setFixedSize(20, 20)
+                checkbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                checkbox.setStyleSheet(f"""
+                    background-color: {'#10B981' if task['status'] == 'completed' else '#FFFFFF'};
+                    border: 2px solid {'#10B981' if task['status'] == 'completed' else '#E2E8F0'};
+                    border-radius: 4px;
+                    color: white;
+                    font-size: 12px;
+                    font-weight: bold;
+                """)
+                task_layout.addWidget(checkbox)
+                
+                # Info de tarea
+                task_info = QVBoxLayout()
+                task_info.setSpacing(2)
+                
+                task_title = QLabel(task['title'])
+                task_title.setStyleSheet(f"""
+                    color: {COLORS['text_primary']};
+                    font-size: 13px;
+                    font-weight: 500;
+                    {'text-decoration: line-through;' if task['status'] == 'completed' else ''}
+                """)
+                task_info.addWidget(task_title)
+                
+                if task.get('description'):
+                    desc = QLabel(task['description'][:60] + '...' if len(task.get('description', '')) > 60 else task.get('description', ''))
+                    desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+                    task_info.addWidget(desc)
+                
+                task_layout.addLayout(task_info, 1)
+                
+                # Badge de prioridad
+                priority = task.get('priority', 'medium')
+                priority_colors = {
+                    'urgent': ('#DC2626', '#FEE2E2'),
+                    'high': ('#F59E0B', '#FEF3C7'),
+                    'medium': ('#3B82F6', '#DBEAFE'),
+                    'low': ('#10B981', '#D1FAE5')
+                }
+                p_color = priority_colors.get(priority, priority_colors['medium'])
+                priority_badge = QLabel(priority.capitalize())
+                priority_badge.setStyleSheet(f"""
+                    background-color: {p_color[1]};
+                    color: {p_color[0]};
+                    padding: 2px 8px;
+                    border-radius: 8px;
+                    font-size: 10px;
+                    font-weight: 600;
+                """)
+                task_layout.addWidget(priority_badge)
+                
+                tasks_section_layout.addWidget(task_item)
+        else:
+            no_tasks = QLabel("🎉 No tiene tareas asignadas")
+            no_tasks.setStyleSheet(f"color: {COLORS['text_muted']}; padding: 20px; font-size: 13px;")
+            no_tasks.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tasks_section_layout.addWidget(no_tasks)
+        
+        content_layout.addWidget(tasks_section)
+        
+        # === MIS TAREAS RELACIONADAS (si soy yo diferente) ===
+        if me and me['id'] != person['id']:
+            # Buscar tareas donde yo tengo que hacer algo relacionado con esta persona
+            my_tasks = self.db.get_my_tasks()
+            related_tasks = [t for t in my_tasks if person['name'].lower() in (t.get('title', '') + t.get('description', '')).lower()]
             
-        # Skills
+            if related_tasks:
+                my_section = QFrame()
+                my_section.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: #EEF2FF;
+                        border: 1px solid #C7D2FE;
+                        border-radius: 12px;
+                    }}
+                """)
+                my_section_layout = QVBoxLayout(my_section)
+                my_section_layout.setSpacing(12)
+                my_section_layout.setContentsMargins(20, 20, 20, 20)
+                
+                my_header = QLabel(f"👤 Mis tareas relacionadas con {person['name']}")
+                my_header.setStyleSheet(f"color: #4F46E5; font-size: 14px; font-weight: 700;")
+                my_section_layout.addWidget(my_header)
+                
+                for task in related_tasks[:5]:
+                    task_label = QLabel(f"• {task['title']}")
+                    task_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px;")
+                    my_section_layout.addWidget(task_label)
+                
+                content_layout.addWidget(my_section)
+        
+        # === HABILIDADES (compacto) ===
         if person_data and person_data.get('skills'):
-            skills_card = Card()
-            skills_layout = QVBoxLayout(skills_card)
+            skills_section = QFrame()
+            skills_section.setStyleSheet(f"""
+                QFrame {{
+                    background-color: #FFFFFF;
+                    border: 1px solid {COLORS['border_light']};
+                    border-radius: 12px;
+                }}
+            """)
+            skills_layout = QVBoxLayout(skills_section)
             skills_layout.setSpacing(12)
+            skills_layout.setContentsMargins(20, 20, 20, 20)
             
             skills_header = QLabel("📊 Habilidades")
-            skills_header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 16px; font-weight: 600;")
+            skills_header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 600;")
             skills_layout.addWidget(skills_header)
             
-            for skill in person_data['skills']:
-                skill_bar = SkillBar(skill['name'], skill['score'], skill.get('category', ''))
-                skills_layout.addWidget(skill_bar)
-            layout.addWidget(skills_card)
+            skills_grid = QHBoxLayout()
+            skills_grid.setSpacing(8)
+            for skill in person_data['skills'][:6]:
+                skill_badge = QLabel(f"{skill['name']} ({skill['score']:.0f}%)")
+                skill_badge.setStyleSheet(f"""
+                    background-color: {COLORS['bg_secondary']};
+                    color: {COLORS['text_secondary']};
+                    padding: 6px 12px;
+                    border-radius: 8px;
+                    font-size: 11px;
+                """)
+                skills_grid.addWidget(skill_badge)
+            skills_grid.addStretch()
+            skills_layout.addLayout(skills_grid)
             
-        layout.addStretch()
+            content_layout.addWidget(skills_section)
         
+        content_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll, 1)
+        
+        # Botón cerrar
         close_btn = QPushButton("Cerrar")
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent']};
+                color: white;
+                padding: 10px 24px;
+                border-radius: 8px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: #2563EB;
+            }}
+        """)
         close_btn.clicked.connect(dialog.close)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        main_layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
         
         dialog.exec()
         
