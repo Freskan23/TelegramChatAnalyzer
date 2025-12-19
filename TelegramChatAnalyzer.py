@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -441,6 +441,24 @@ class Database:
             )
         ''')
         
+        # Tabla de alertas de comportamiento
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS behavior_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                alert_type TEXT NOT NULL,
+                severity TEXT DEFAULT 'medium',
+                title TEXT NOT NULL,
+                description TEXT,
+                evidence TEXT,
+                message_examples TEXT,
+                recommendation TEXT,
+                is_dismissed INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (person_id) REFERENCES persons(id)
+            )
+        ''')
+        
         self.conn.commit()
         
     def add_chat(self, name: str, chat_type: str = 'group', file_path: str = None) -> int:
@@ -550,37 +568,37 @@ class Database:
         self.conn.commit()
         return self.cursor.lastrowid
     
-    def get_all_tasks(self, status: str = None) -> List[Dict]:
+    def get_all_tasks(self, status: str = None, person_id: int = None) -> List[Dict]:
+        conditions = []
+        params = []
+        
         if status:
-            self.cursor.execute('''
-                SELECT t.*, p.name as assigned_to_name
-                FROM tasks t
-                LEFT JOIN persons p ON t.assigned_to = p.id
-                WHERE t.status = ?
-                ORDER BY 
-                    CASE t.priority 
-                        WHEN 'urgent' THEN 1 
-                        WHEN 'high' THEN 2 
-                        WHEN 'medium' THEN 3 
-                        ELSE 4 
-                    END,
-                    t.created_at DESC
-            ''', (status,))
-        else:
-            self.cursor.execute('''
-                SELECT t.*, p.name as assigned_to_name
-                FROM tasks t
-                LEFT JOIN persons p ON t.assigned_to = p.id
-                ORDER BY 
-                    CASE t.status WHEN 'completed' THEN 1 ELSE 0 END,
-                    CASE t.priority 
-                        WHEN 'urgent' THEN 1 
-                        WHEN 'high' THEN 2 
-                        WHEN 'medium' THEN 3 
-                        ELSE 4 
-                    END,
-                    t.created_at DESC
-            ''')
+            conditions.append("t.status = ?")
+            params.append(status)
+        
+        if person_id:
+            conditions.append("t.assigned_to = ?")
+            params.append(person_id)
+        
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        
+        query = f'''
+            SELECT t.*, p.name as assigned_to_name
+            FROM tasks t
+            LEFT JOIN persons p ON t.assigned_to = p.id
+            {where_clause}
+            ORDER BY 
+                CASE t.status WHEN 'completed' THEN 1 ELSE 0 END,
+                CASE t.priority 
+                    WHEN 'urgent' THEN 1 
+                    WHEN 'high' THEN 2 
+                    WHEN 'medium' THEN 3 
+                    ELSE 4 
+                END,
+                t.created_at DESC
+        '''
+        
+        self.cursor.execute(query, params)
         return [dict(row) for row in self.cursor.fetchall()]
     
     def get_my_tasks(self) -> List[Dict]:
@@ -589,8 +607,8 @@ class Database:
             return []
         return self.get_tasks_for_person(me['id'])
     
-    def get_tasks_grouped_by_category(self, status: str = None) -> Dict[str, List[Dict]]:
-        tasks = self.get_all_tasks(status)
+    def get_tasks_grouped_by_category(self, status: str = None, person_id: int = None) -> Dict[str, List[Dict]]:
+        tasks = self.get_all_tasks(status, person_id)
         grouped = {}
         for task in tasks:
             category = task.get('category', 'general') or 'general'
@@ -807,6 +825,74 @@ class Database:
             UPDATE objectives SET current_value = ? WHERE id = ?
         ''', (current_value, objective_id))
         self.conn.commit()
+    
+    # === FUNCIONES DE ALERTAS DE COMPORTAMIENTO ===
+    def add_behavior_alert(self, person_id: int, alert_type: str, title: str,
+                           description: str = None, severity: str = 'medium',
+                           evidence: str = None, message_examples: str = None,
+                           recommendation: str = None) -> int:
+        self.cursor.execute('''
+            INSERT INTO behavior_alerts 
+            (person_id, alert_type, title, description, severity, evidence, message_examples, recommendation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (person_id, alert_type, title, description, severity, evidence, message_examples, recommendation))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_alerts_for_person(self, person_id: int, include_dismissed: bool = False) -> List[Dict]:
+        if include_dismissed:
+            self.cursor.execute('''
+                SELECT * FROM behavior_alerts WHERE person_id = ?
+                ORDER BY severity DESC, created_at DESC
+            ''', (person_id,))
+        else:
+            self.cursor.execute('''
+                SELECT * FROM behavior_alerts WHERE person_id = ? AND is_dismissed = 0
+                ORDER BY severity DESC, created_at DESC
+            ''', (person_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_all_alerts(self, include_dismissed: bool = False) -> List[Dict]:
+        if include_dismissed:
+            self.cursor.execute('''
+                SELECT ba.*, p.name as person_name
+                FROM behavior_alerts ba
+                JOIN persons p ON ba.person_id = p.id
+                ORDER BY ba.severity DESC, ba.created_at DESC
+            ''')
+        else:
+            self.cursor.execute('''
+                SELECT ba.*, p.name as person_name
+                FROM behavior_alerts ba
+                JOIN persons p ON ba.person_id = p.id
+                WHERE ba.is_dismissed = 0
+                ORDER BY ba.severity DESC, ba.created_at DESC
+            ''')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def dismiss_alert(self, alert_id: int):
+        self.cursor.execute('UPDATE behavior_alerts SET is_dismissed = 1 WHERE id = ?', (alert_id,))
+        self.conn.commit()
+    
+    def get_alerts_summary(self) -> Dict:
+        self.cursor.execute('''
+            SELECT 
+                alert_type,
+                severity,
+                COUNT(*) as count
+            FROM behavior_alerts
+            WHERE is_dismissed = 0
+            GROUP BY alert_type, severity
+        ''')
+        results = self.cursor.fetchall()
+        summary = {'total': 0, 'by_type': {}, 'by_severity': {'high': 0, 'medium': 0, 'low': 0}}
+        for row in results:
+            summary['total'] += row['count']
+            if row['alert_type'] not in summary['by_type']:
+                summary['by_type'][row['alert_type']] = 0
+            summary['by_type'][row['alert_type']] += row['count']
+            summary['by_severity'][row['severity']] += row['count']
+        return summary
     
     # === FUNCIONES DE ACTIVIDAD ===
     def get_activity_by_date(self, person_id: int = None) -> List[Dict]:
@@ -1214,6 +1300,56 @@ Responde SOLO con JSON válido:
             return data.get('patterns', [])
         except Exception as e:
             print(f"Error detectando patrones: {e}")
+            return []
+    
+    def detect_behavior_alerts(self, messages: List[Dict], person_name: str, my_name: str = None) -> List[Dict]:
+        """Detecta comportamientos problemáticos de una persona hacia el usuario"""
+        messages_text = self._format_messages(messages[:150])
+        
+        system_prompt = f"""Eres un experto en psicología y comunicación interpersonal.
+Analiza los mensajes de {person_name} para detectar comportamientos problemáticos hacia {my_name or 'el usuario'}.
+
+DETECTA ESTOS TIPOS DE ALERTAS:
+
+1. INCONSISTENCIAS (inconsistency): Cuando dice una cosa y luego otra diferente, promesas rotas, contradicciones
+2. ABUSO_CONOCIMIENTO (knowledge_abuse): Pide ayuda constantemente sin dar nada a cambio, extrae información valiosa sin compensación, usa como "consultor gratis"
+3. MANIPULACION_EMOCIONAL (emotional_manipulation): Cumplidos excesivos fuera de contexto, intentos de ligar, cambios de tema hacia lo personal, frases manipuladoras
+4. POSIBLES_MENTIRAS (possible_lies): Excusas repetitivas, historias que no cuadran, evasión de preguntas directas
+5. RED_FLAGS (red_flags): Presión para tomar decisiones rápidas, victimismo constante, falta de reciprocidad, comportamiento tóxico
+
+SÉ MUY CUIDADOSO: Solo reporta alertas cuando hay evidencia clara. No inventes alertas.
+Si no hay comportamientos problemáticos, devuelve una lista vacía.
+
+Responde SOLO con JSON válido:
+{{
+    "alerts": [
+        {{
+            "alert_type": "inconsistency|knowledge_abuse|emotional_manipulation|possible_lies|red_flags",
+            "severity": "low|medium|high",
+            "title": "Título breve y descriptivo de la alerta",
+            "description": "Descripción detallada del comportamiento detectado",
+            "evidence": "Evidencia concreta del chat que justifica esta alerta",
+            "message_examples": ["mensaje ejemplo 1", "mensaje ejemplo 2"],
+            "recommendation": "Qué debería hacer el usuario ante esta situación",
+            "confidence": 0.0-1.0
+        }}
+    ]
+}}
+
+IMPORTANTE: Solo incluye alertas con confidence >= 0.6. Mejor pocos alertas certeras que muchos falsos positivos."""
+
+        prompt = f"Analiza los mensajes de {person_name} y detecta comportamientos problemáticos:\n\n{messages_text}\n\nResponde SOLO con JSON válido."
+
+        try:
+            response = self._call_ai(prompt, system_prompt)
+            json_str = self._extract_json(response)
+            data = json.loads(json_str)
+            
+            # Filtrar por confidence
+            alerts = [a for a in data.get('alerts', []) if float(a.get('confidence', 0)) >= 0.6]
+            return alerts
+        except Exception as e:
+            print(f"Error detectando alertas para {person_name}: {e}")
             return []
     
     def _format_messages(self, messages: List[Dict], include_sender: bool = True) -> str:
@@ -2342,7 +2478,8 @@ class MainWindow(QMainWindow):
             ("📁", "Proyectos"),
             ("🔗", "Enlaces"),
             ("📈", "Actividad"),
-            ("🎯", "Objetivos")
+            ("🎯", "Objetivos"),
+            ("🛡️", "Alertas")
         ]
         
         for i, (icon, name) in enumerate(tab_names):
@@ -2385,9 +2522,9 @@ class MainWindow(QMainWindow):
         self.profile_content_stack = QStackedWidget()
         self.profile_content_stack.setStyleSheet("background: transparent;")
         
-        # Crear las 7 páginas de pestañas
+        # Crear las 8 páginas de pestañas
         self.profile_tab_pages = []
-        for i in range(7):
+        for i in range(8):
             tab_page = QWidget()
             tab_page.setStyleSheet("background: transparent;")
             tab_layout = QVBoxLayout(tab_page)
@@ -2440,6 +2577,8 @@ class MainWindow(QMainWindow):
             self._load_profile_actividad(layout, me)
         elif tab_index == 6:
             self._load_profile_objetivos(layout, me)
+        elif tab_index == 7:
+            self._load_profile_alertas(layout, me)
     
     def _load_profile_resumen(self, layout: QVBoxLayout, me: dict):
         me_data = self.db.get_person_with_skills(me['id'])
@@ -3094,6 +3233,294 @@ class MainWindow(QMainWindow):
             self.db.add_objective(person_id, title)
             self._load_profile_tab_content(6)  # Recargar pestaña de objetivos
         
+    def _load_profile_alertas(self, layout: QVBoxLayout, me: dict):
+        """Carga la pestaña de alertas de comportamiento"""
+        header_row = QHBoxLayout()
+        header = QLabel("🛡️ Alertas de Comportamiento")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+        
+        # Botón para analizar alertas
+        analyze_btn = QPushButton("🔍 Analizar Comportamientos")
+        analyze_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #EF4444;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #DC2626;
+            }
+        """)
+        analyze_btn.clicked.connect(self._analyze_behavior_alerts)
+        header_row.addWidget(analyze_btn)
+        layout.addLayout(header_row)
+        
+        # Descripción
+        desc = QLabel("Este sistema analiza los chats para detectar comportamientos problemáticos como inconsistencias, abuso de conocimiento, manipulación emocional, posibles mentiras y otras señales de alerta.")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; margin-bottom: 16px;")
+        layout.addWidget(desc)
+        
+        # Obtener alertas
+        alerts = self.db.get_all_alerts(include_dismissed=False)
+        
+        if alerts:
+            # Resumen de alertas
+            summary = self.db.get_alerts_summary()
+            summary_card = QFrame()
+            summary_card.setStyleSheet("""
+                QFrame {
+                    background-color: #FEF2F2;
+                    border: 1px solid #FECACA;
+                    border-radius: 12px;
+                }
+            """)
+            s_layout = QHBoxLayout(summary_card)
+            s_layout.setContentsMargins(16, 12, 16, 12)
+            
+            total_label = QLabel(f"⚠️ {summary['total']} alertas activas")
+            total_label.setStyleSheet("color: #DC2626; font-size: 14px; font-weight: 600;")
+            s_layout.addWidget(total_label)
+            s_layout.addStretch()
+            
+            if summary['by_severity']['high'] > 0:
+                high_badge = QLabel(f"🔴 {summary['by_severity']['high']} alta")
+                high_badge.setStyleSheet("color: #DC2626; font-size: 12px;")
+                s_layout.addWidget(high_badge)
+            if summary['by_severity']['medium'] > 0:
+                med_badge = QLabel(f"🟠 {summary['by_severity']['medium']} media")
+                med_badge.setStyleSheet("color: #F59E0B; font-size: 12px; margin-left: 8px;")
+                s_layout.addWidget(med_badge)
+            if summary['by_severity']['low'] > 0:
+                low_badge = QLabel(f"🟢 {summary['by_severity']['low']} baja")
+                low_badge.setStyleSheet("color: #10B981; font-size: 12px; margin-left: 8px;")
+                s_layout.addWidget(low_badge)
+            
+            layout.addWidget(summary_card)
+            layout.addSpacing(16)
+            
+            # Lista de alertas
+            for alert in alerts:
+                alert_card = self._create_alert_card(alert)
+                layout.addWidget(alert_card)
+        else:
+            empty = EmptyState(
+                "✅",
+                "Sin alertas detectadas",
+                "No se han detectado comportamientos problemáticos. Haz clic en 'Analizar Comportamientos' para escanear los chats."
+            )
+            layout.addWidget(empty)
+        
+        layout.addStretch()
+    
+    def _create_alert_card(self, alert: dict) -> QFrame:
+        """Crea una tarjeta de alerta de comportamiento"""
+        card = QFrame()
+        
+        # Color según severidad
+        severity_colors = {
+            'high': ('#FEF2F2', '#FECACA', '#DC2626'),
+            'medium': ('#FFFBEB', '#FDE68A', '#F59E0B'),
+            'low': ('#F0FDF4', '#BBF7D0', '#10B981')
+        }
+        bg, border, accent = severity_colors.get(alert.get('severity', 'medium'), severity_colors['medium'])
+        
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-left: 4px solid {accent};
+                border-radius: 12px;
+            }}
+        """)
+        
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 16, 16, 16)
+        c_layout.setSpacing(10)
+        
+        # Header con tipo y persona
+        header_row = QHBoxLayout()
+        
+        # Icono de tipo
+        type_icons = {
+            'inconsistency': '🎭',
+            'knowledge_abuse': '💰',
+            'emotional_manipulation': '💔',
+            'possible_lies': '🤥',
+            'red_flags': '🚩'
+        }
+        type_names = {
+            'inconsistency': 'Inconsistencia',
+            'knowledge_abuse': 'Abuso de conocimiento',
+            'emotional_manipulation': 'Manipulación emocional',
+            'possible_lies': 'Posible mentira',
+            'red_flags': 'Señal de alerta'
+        }
+        
+        alert_type = alert.get('alert_type', 'red_flags')
+        type_icon = type_icons.get(alert_type, '⚠️')
+        type_name = type_names.get(alert_type, 'Alerta')
+        
+        type_label = QLabel(f"{type_icon} {type_name}")
+        type_label.setStyleSheet(f"color: {accent}; font-size: 12px; font-weight: 600;")
+        header_row.addWidget(type_label)
+        
+        header_row.addStretch()
+        
+        # Persona
+        person_label = QLabel(f"👤 {alert.get('person_name', 'Desconocido')}")
+        person_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        header_row.addWidget(person_label)
+        
+        # Botón descartar
+        dismiss_btn = QPushButton("✕")
+        dismiss_btn.setFixedSize(24, 24)
+        dismiss_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #94A3B8;
+                border: none;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                color: #64748B;
+            }
+        """)
+        dismiss_btn.clicked.connect(lambda: self._dismiss_alert(alert['id']))
+        header_row.addWidget(dismiss_btn)
+        
+        c_layout.addLayout(header_row)
+        
+        # Título
+        title = QLabel(alert.get('title', 'Alerta'))
+        title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 15px; font-weight: 600;")
+        title.setWordWrap(True)
+        c_layout.addWidget(title)
+        
+        # Descripción
+        if alert.get('description'):
+            desc = QLabel(alert['description'])
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
+            c_layout.addWidget(desc)
+        
+        # Evidencia
+        if alert.get('evidence'):
+            evidence_frame = QFrame()
+            evidence_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: rgba(255,255,255,0.5);
+                    border-radius: 8px;
+                    padding: 8px;
+                }}
+            """)
+            e_layout = QVBoxLayout(evidence_frame)
+            e_layout.setContentsMargins(12, 8, 12, 8)
+            
+            e_label = QLabel("📝 Evidencia:")
+            e_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;")
+            e_layout.addWidget(e_label)
+            
+            e_text = QLabel(alert['evidence'])
+            e_text.setWordWrap(True)
+            e_text.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; font-style: italic;")
+            e_layout.addWidget(e_text)
+            
+            c_layout.addWidget(evidence_frame)
+        
+        # Recomendación
+        if alert.get('recommendation'):
+            rec_row = QHBoxLayout()
+            rec_icon = QLabel("💡")
+            rec_icon.setStyleSheet("font-size: 14px;")
+            rec_row.addWidget(rec_icon)
+            
+            rec_text = QLabel(alert['recommendation'])
+            rec_text.setWordWrap(True)
+            rec_text.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 500;")
+            rec_row.addWidget(rec_text, 1)
+            c_layout.addLayout(rec_row)
+        
+        return card
+    
+    def _dismiss_alert(self, alert_id: int):
+        """Descarta una alerta"""
+        self.db.dismiss_alert(alert_id)
+        self._load_profile_tab_content(7)  # Recargar pestaña de alertas
+    
+    def _analyze_behavior_alerts(self):
+        """Analiza comportamientos problemáticos en todos los chats"""
+        api_key = self.db.get_setting('api_key')
+        if not api_key:
+            QMessageBox.warning(self, "API Key requerida", 
+                "Configura tu API Key de Gemini en Configuración para usar el análisis de comportamiento.")
+            return
+        
+        me = self.db.get_me()
+        if not me:
+            QMessageBox.warning(self, "Usuario no seleccionado",
+                "Selecciona tu usuario en el selector de 'Mi Perfil' primero.")
+            return
+        
+        reply = QMessageBox.question(self, "Analizar Comportamientos",
+            "Esto analizará los mensajes de cada persona para detectar comportamientos problemáticos.\n\n"
+            "¿Deseas continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        try:
+            analyzer = AIAnalyzer(api_key)
+            persons = self.db.get_all_persons(min_messages=5)
+            
+            progress = QMessageBox(self)
+            progress.setWindowTitle("Analizando...")
+            progress.setText("Analizando comportamientos...")
+            progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
+            progress.show()
+            QApplication.processEvents()
+            
+            total_alerts = 0
+            for person in persons:
+                if person['id'] == me['id']:
+                    continue  # No analizar al propio usuario
+                
+                messages = self.db.get_messages_for_person(person['id'])
+                if len(messages) < 5:
+                    continue
+                
+                alerts = analyzer.detect_behavior_alerts(messages, person['name'], me['name'])
+                
+                for alert in alerts:
+                    self.db.add_behavior_alert(
+                        person_id=person['id'],
+                        alert_type=alert.get('alert_type', 'red_flags'),
+                        title=alert.get('title', 'Alerta detectada'),
+                        description=alert.get('description'),
+                        severity=alert.get('severity', 'medium'),
+                        evidence=alert.get('evidence'),
+                        message_examples=json.dumps(alert.get('message_examples', [])),
+                        recommendation=alert.get('recommendation')
+                    )
+                    total_alerts += 1
+            
+            progress.close()
+            
+            QMessageBox.information(self, "Análisis completado",
+                f"Se detectaron {total_alerts} alertas de comportamiento.")
+            
+            self._load_profile_tab_content(7)  # Recargar pestaña de alertas
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al analizar: {str(e)}")
+    
     def _create_persons_page(self) -> QWidget:
         page = QWidget()
         page.setStyleSheet(f"background-color: {COLORS['bg_primary']};")
@@ -3163,6 +3590,13 @@ class MainWindow(QMainWindow):
         self.task_filter.setFixedWidth(150)
         self.task_filter.currentTextChanged.connect(self._filter_tasks)
         header_layout.addWidget(self.task_filter)
+        
+        # Filtro por persona
+        self.task_person_filter = QComboBox()
+        self.task_person_filter.addItem("Todas las personas", None)
+        self.task_person_filter.setFixedWidth(180)
+        self.task_person_filter.currentIndexChanged.connect(self._filter_tasks_by_person)
+        header_layout.addWidget(self.task_person_filter)
         
         # Toggle agrupación
         self.group_toggle = QPushButton("📂 Agrupar")
@@ -3577,6 +4011,7 @@ class MainWindow(QMainWindow):
     def _load_data(self):
         self._update_dashboard()
         self._load_persons()
+        self._populate_person_filter()  # Llenar filtro de personas
         self._load_tasks()
         self._load_patterns()
         self._update_me_selector()
@@ -3763,11 +4198,16 @@ class MainWindow(QMainWindow):
         else:
             status = None
         
+        # Obtener filtro por persona
+        person_id = None
+        if hasattr(self, 'task_person_filter'):
+            person_id = self.task_person_filter.currentData()
+        
         # Verificar si agrupación está activa
         group_by_category = hasattr(self, 'group_toggle') and self.group_toggle.isChecked()
         
         if group_by_category:
-            grouped_tasks = self.db.get_tasks_grouped_by_category(status)
+            grouped_tasks = self.db.get_tasks_grouped_by_category(status, person_id)
             
             if not grouped_tasks:
                 self.tasks_empty.show()
@@ -3858,6 +4298,35 @@ class MainWindow(QMainWindow):
             
     def _filter_tasks(self, filter_text: str):
         self._load_tasks(filter_text if filter_text != "Todas" else None)
+    
+    def _filter_tasks_by_person(self, index: int):
+        """Filtra tareas por persona seleccionada"""
+        status_filter = self.task_filter.currentText()
+        status = status_filter if status_filter != "Todas" else None
+        self._load_tasks(status)
+    
+    def _populate_person_filter(self):
+        """Llena el filtro de personas con los usuarios disponibles"""
+        if not hasattr(self, 'task_person_filter'):
+            return
+        
+        current_data = self.task_person_filter.currentData()
+        self.task_person_filter.blockSignals(True)
+        self.task_person_filter.clear()
+        self.task_person_filter.addItem("Todas las personas", None)
+        
+        persons = self.db.get_all_persons(min_messages=0)
+        for person in persons:
+            self.task_person_filter.addItem(person['name'], person['id'])
+        
+        # Restaurar selección si existía
+        if current_data:
+            for i in range(self.task_person_filter.count()):
+                if self.task_person_filter.itemData(i) == current_data:
+                    self.task_person_filter.setCurrentIndex(i)
+                    break
+        
+        self.task_person_filter.blockSignals(False)
                 
     def _load_patterns(self):
         self._clear_layout(self.patterns_grid)
