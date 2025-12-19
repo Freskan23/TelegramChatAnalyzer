@@ -347,6 +347,7 @@ class Database:
                 description TEXT,
                 status TEXT DEFAULT 'pending',
                 priority TEXT DEFAULT 'medium',
+                category TEXT DEFAULT 'general',
                 assigned_to INTEGER,
                 source_message TEXT,
                 due_date TEXT,
@@ -355,6 +356,13 @@ class Database:
                 FOREIGN KEY (assigned_to) REFERENCES persons(id)
             )
         ''')
+        
+        # Migrar tabla existente si no tiene category
+        try:
+            self.cursor.execute('ALTER TABLE tasks ADD COLUMN category TEXT DEFAULT "general"')
+            self.conn.commit()
+        except:
+            pass
         
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS messages (
@@ -487,12 +495,12 @@ class Database:
         self.conn.commit()
         
     def add_task(self, title: str, description: str = None, status: str = 'pending',
-                 priority: str = 'medium', assigned_to: int = None, 
+                 priority: str = 'medium', category: str = 'general', assigned_to: int = None, 
                  source_message: str = None, due_date: str = None) -> int:
         self.cursor.execute('''
-            INSERT INTO tasks (title, description, status, priority, assigned_to, source_message, due_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (title, description, status, priority, assigned_to, source_message, due_date))
+            INSERT INTO tasks (title, description, status, priority, category, assigned_to, source_message, due_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (title, description, status, priority, category, assigned_to, source_message, due_date))
         self.conn.commit()
         return self.cursor.lastrowid
     
@@ -534,6 +542,20 @@ class Database:
         if not me:
             return []
         return self.get_tasks_for_person(me['id'])
+    
+    def get_tasks_grouped_by_category(self, status: str = None) -> Dict[str, List[Dict]]:
+        tasks = self.get_all_tasks(status)
+        grouped = {}
+        for task in tasks:
+            category = task.get('category', 'general') or 'general'
+            if category not in grouped:
+                grouped[category] = []
+            grouped[category].append(task)
+        return grouped
+    
+    def get_task_categories(self) -> List[str]:
+        self.cursor.execute('SELECT DISTINCT category FROM tasks WHERE category IS NOT NULL')
+        return [row['category'] for row in self.cursor.fetchall()]
     
     def get_tasks_for_person(self, person_id: int) -> List[Dict]:
         self.cursor.execute('''
@@ -807,6 +829,7 @@ class TaskExtracted:
     description: str = ""
     status: str = "pending"
     priority: str = "medium"
+    category: str = "general"
     assigned_to: str = None
     source_message: str = ""
     confidence: float = 0.0
@@ -886,6 +909,17 @@ class AIAnalyzer:
 Identifica TODAS las tareas, compromisos, pendientes y acciones mencionados en la conversación.
 Sé muy detallado y no te pierdas ninguna tarea implícita o explícita.
 
+CATEGORÍAS DISPONIBLES:
+- mentoría: Tareas relacionadas con enseñanza, coaching, formación
+- técnico: Desarrollo, programación, configuración técnica
+- marketing: Publicidad, redes sociales, contenido promocional
+- ventas: Clientes, leads, propuestas comerciales
+- negocio: Estrategia, planificación, modelo de negocio
+- diseño: Gráficos, UI/UX, branding
+- contenido: Blogs, videos, material educativo
+- administrativo: Documentos, facturas, trámites
+- general: Otras tareas
+
 Responde SOLO con JSON válido:
 {
     "tasks": [
@@ -894,12 +928,15 @@ Responde SOLO con JSON válido:
             "description": "Descripción detallada de la tarea",
             "status": "pending|in_progress|completed",
             "priority": "low|medium|high|urgent",
-            "assigned_to": "nombre de la persona o null",
+            "category": "mentoría|técnico|marketing|ventas|negocio|diseño|contenido|administrativo|general",
+            "assigned_to": "nombre de la persona responsable o null",
             "source_message": "mensaje original donde se menciona",
             "confidence": 0.0-1.0
         }
     ]
-}"""
+}
+
+IMPORTANTE: En assigned_to, indica claramente QUIÉN debe realizar la tarea, no quién la mencionó."""
 
         prompt = f"Analiza esta conversación y extrae TODAS las tareas:\n\n{messages_text}\n\nResponde SOLO con JSON válido."
 
@@ -915,6 +952,7 @@ Responde SOLO con JSON válido:
                     description=t.get('description', ''),
                     status=t.get('status', 'pending'),
                     priority=t.get('priority', 'medium'),
+                    category=t.get('category', 'general'),
                     assigned_to=t.get('assigned_to'),
                     source_message=t.get('source_message', ''),
                     confidence=float(t.get('confidence', 0.5))
@@ -1257,87 +1295,166 @@ class PersonCard(Card):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
 
+# Colores para categorías de tareas
+CATEGORY_COLORS = {
+    'mentoría': ('#8B5CF6', '#EDE9FE'),      # Violeta
+    'mentoria': ('#8B5CF6', '#EDE9FE'),      # Violeta (sin tilde)
+    'técnico': ('#3B82F6', '#DBEAFE'),       # Azul
+    'tecnico': ('#3B82F6', '#DBEAFE'),       # Azul (sin tilde)
+    'marketing': ('#EC4899', '#FCE7F3'),     # Rosa
+    'ventas': ('#10B981', '#D1FAE5'),        # Verde
+    'negocio': ('#F59E0B', '#FEF3C7'),       # Ámbar
+    'administrativo': ('#6B7280', '#F3F4F6'), # Gris
+    'diseño': ('#06B6D4', '#CFFAFE'),        # Cyan
+    'contenido': ('#F97316', '#FFEDD5'),     # Naranja
+    'general': ('#6366F1', '#EEF2FF'),       # Indigo
+}
+
+
 class TaskCard(QFrame):
     status_changed = pyqtSignal(int, str)
     
     def __init__(self, task_id: int, title: str, description: str = "",
                  status: str = "pending", priority: str = "medium",
-                 assigned_to: str = None, parent=None):
+                 category: str = "general", assigned_to: str = None, parent=None):
         super().__init__(parent)
         self.task_id = task_id
         self.status = status
-        self._setup_ui(title, description, status, priority, assigned_to)
+        self._setup_ui(title, description, status, priority, category, assigned_to)
         
     def _setup_ui(self, title: str, description: str, status: str, 
-                  priority: str, assigned_to: str):
+                  priority: str, category: str, assigned_to: str):
         priority_colors = PRIORITY_COLORS.get(priority, PRIORITY_COLORS['medium'])
+        category_colors = CATEGORY_COLORS.get(category.lower() if category else 'general', CATEGORY_COLORS['general'])
         
+        # Fondo blanco puro con borde más visible
         self.setStyleSheet(f"""
             QFrame {{
-                background-color: {COLORS['bg_secondary']};
-                border: 1px solid {COLORS['border_light']};
-                border-left: 4px solid {priority_colors[0]};
+                background-color: #FFFFFF;
+                border: 1px solid {COLORS['border']};
+                border-left: 5px solid {priority_colors[0]};
                 border-radius: 12px;
             }}
             QFrame:hover {{
-                border-color: {COLORS['border']};
-                border-left: 4px solid {priority_colors[0]};
+                border-color: {COLORS['accent']};
+                border-left: 5px solid {priority_colors[0]};
+                background-color: #FAFBFC;
             }}
         """)
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(16)
         
-        # Checkbox
+        # Checkbox más grande y visible
         self.checkbox = QPushButton()
-        self.checkbox.setFixedSize(28, 28)
+        self.checkbox.setFixedSize(32, 32)
         self.checkbox.setCheckable(True)
         self.checkbox.setChecked(status == "completed")
         self._update_checkbox_style()
         self.checkbox.clicked.connect(self._on_status_toggle)
-        layout.addWidget(self.checkbox)
+        layout.addWidget(self.checkbox, alignment=Qt.AlignmentFlag.AlignTop)
         
         # Content
         content_layout = QVBoxLayout()
-        content_layout.setSpacing(6)
+        content_layout.setSpacing(10)
         
+        # Título con mejor contraste
         title_label = QLabel(title)
-        title_style = f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 500;"
         if status == "completed":
-            title_style += " text-decoration: line-through; color: " + COLORS['text_muted'] + ";"
-        title_label.setStyleSheet(title_style)
+            title_label.setStyleSheet(f"""
+                color: {COLORS['text_muted']};
+                font-size: 15px;
+                font-weight: 500;
+                text-decoration: line-through;
+            """)
+        else:
+            title_label.setStyleSheet(f"""
+                color: #1a1a2e;
+                font-size: 15px;
+                font-weight: 600;
+            """)
+        title_label.setWordWrap(True)
         content_layout.addWidget(title_label)
         
+        # Descripción con mejor visibilidad
         if description:
-            desc_text = description[:80] + "..." if len(description) > 80 else description
+            desc_text = description[:100] + "..." if len(description) > 100 else description
             desc_label = QLabel(desc_text)
             desc_label.setStyleSheet(f"""
-                color: {COLORS['text_secondary']};
+                color: #4a5568;
                 font-size: 13px;
+                line-height: 1.4;
             """)
             desc_label.setWordWrap(True)
             content_layout.addWidget(desc_label)
             
-        # Meta info
+        # Meta info con badges
         meta_layout = QHBoxLayout()
-        meta_layout.setSpacing(12)
+        meta_layout.setSpacing(10)
         
+        # Responsable destacado
         if assigned_to:
-            assigned_label = QLabel(f"👤 {assigned_to}")
-            assigned_label.setStyleSheet(f"""
-                color: {COLORS['text_muted']};
-                font-size: 12px;
+            assigned_frame = QFrame()
+            assigned_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {COLORS['accent_soft']};
+                    border-radius: 6px;
+                    padding: 2px;
+                }}
             """)
-            meta_layout.addWidget(assigned_label)
+            assigned_inner = QHBoxLayout(assigned_frame)
+            assigned_inner.setContentsMargins(8, 4, 10, 4)
+            assigned_inner.setSpacing(6)
             
-        priority_label = QLabel(f"● {priority.capitalize()}")
-        priority_label.setStyleSheet(f"""
+            # Avatar pequeño
+            avatar = QLabel(assigned_to[0].upper() if assigned_to else "?")
+            avatar.setFixedSize(22, 22)
+            avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            avatar.setStyleSheet(f"""
+                background-color: {COLORS['accent']};
+                color: white;
+                border-radius: 11px;
+                font-size: 11px;
+                font-weight: 700;
+            """)
+            assigned_inner.addWidget(avatar)
+            
+            name_label = QLabel(assigned_to)
+            name_label.setStyleSheet(f"""
+                color: {COLORS['accent']};
+                font-size: 12px;
+                font-weight: 600;
+            """)
+            assigned_inner.addWidget(name_label)
+            meta_layout.addWidget(assigned_frame)
+        
+        # Badge de categoría
+        if category and category.lower() != 'general':
+            cat_badge = QLabel(category.capitalize())
+            cat_badge.setStyleSheet(f"""
+                background-color: {category_colors[1]};
+                color: {category_colors[0]};
+                padding: 4px 10px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+            """)
+            meta_layout.addWidget(cat_badge)
+            
+        # Badge de prioridad
+        priority_names = {'low': 'Baja', 'medium': 'Media', 'high': 'Alta', 'urgent': 'Urgente'}
+        priority_badge = QLabel(priority_names.get(priority, priority.capitalize()))
+        priority_badge.setStyleSheet(f"""
+            background-color: {priority_colors[1]};
             color: {priority_colors[0]};
-            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
             font-weight: 600;
         """)
-        meta_layout.addWidget(priority_label)
+        meta_layout.addWidget(priority_badge)
+        
         meta_layout.addStretch()
         content_layout.addLayout(meta_layout)
         
@@ -2042,12 +2159,31 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(header)
         header_layout.addStretch()
         
-        # Filter
+        # Filtro de estado
         self.task_filter = QComboBox()
         self.task_filter.addItems(["Todas", "Pendientes", "En progreso", "Completadas"])
         self.task_filter.setFixedWidth(150)
         self.task_filter.currentTextChanged.connect(self._filter_tasks)
         header_layout.addWidget(self.task_filter)
+        
+        # Toggle agrupación
+        self.group_toggle = QPushButton("📂 Agrupar")
+        self.group_toggle.setCheckable(True)
+        self.group_toggle.setChecked(True)
+        self.group_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_soft']};
+                color: {COLORS['accent']};
+                border: 1px solid {COLORS['accent']};
+                padding: 8px 16px;
+            }}
+            QPushButton:checked {{
+                background-color: {COLORS['accent']};
+                color: white;
+            }}
+        """)
+        self.group_toggle.clicked.connect(self._toggle_task_grouping)
+        header_layout.addWidget(self.group_toggle)
         
         add_btn = QPushButton("+ Nueva Tarea")
         add_btn.clicked.connect(self._add_task_dialog)
@@ -2063,7 +2199,7 @@ class MainWindow(QMainWindow):
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         self.tasks_list = QVBoxLayout(scroll_content)
-        self.tasks_list.setSpacing(12)
+        self.tasks_list.setSpacing(16)
         self.tasks_list.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         scroll.setWidget(scroll_content)
@@ -2463,7 +2599,7 @@ class MainWindow(QMainWindow):
             item = TaskCard(
                 task['id'], task['title'], task.get('description', ''),
                 task.get('status', 'pending'), task.get('priority', 'medium'),
-                task.get('assigned_to_name')
+                task.get('category', 'general'), task.get('assigned_to_name')
             )
             item.status_changed.connect(self._on_task_status_changed)
             self.dashboard_tasks_container.addWidget(item)
@@ -2735,28 +2871,108 @@ class MainWindow(QMainWindow):
     def _load_tasks(self, status_filter: str = None):
         self._clear_layout(self.tasks_list)
         
+        # Obtener estado del filtro
         if status_filter == "Pendientes":
-            tasks = self.db.get_all_tasks("pending")
+            status = "pending"
         elif status_filter == "En progreso":
-            tasks = self.db.get_all_tasks("in_progress")
+            status = "in_progress"
         elif status_filter == "Completadas":
-            tasks = self.db.get_all_tasks("completed")
+            status = "completed"
         else:
-            tasks = self.db.get_all_tasks()
+            status = None
         
-        if not tasks:
-            self.tasks_empty.show()
-            return
-        self.tasks_empty.hide()
+        # Verificar si agrupación está activa
+        group_by_category = hasattr(self, 'group_toggle') and self.group_toggle.isChecked()
         
-        for task in tasks:
-            item = TaskCard(
-                task['id'], task['title'], task.get('description', ''),
-                task.get('status', 'pending'), task.get('priority', 'medium'),
-                task.get('assigned_to_name')
-            )
-            item.status_changed.connect(self._on_task_status_changed)
-            self.tasks_list.addWidget(item)
+        if group_by_category:
+            grouped_tasks = self.db.get_tasks_grouped_by_category(status)
+            
+            if not grouped_tasks:
+                self.tasks_empty.show()
+                return
+            self.tasks_empty.hide()
+            
+            # Orden de categorías
+            category_order = ['mentoría', 'mentoria', 'técnico', 'tecnico', 'marketing', 
+                            'ventas', 'negocio', 'diseño', 'contenido', 'administrativo', 'general']
+            
+            # Ordenar categorías
+            sorted_categories = sorted(grouped_tasks.keys(), 
+                key=lambda x: category_order.index(x.lower()) if x.lower() in category_order else 999)
+            
+            for category in sorted_categories:
+                tasks = grouped_tasks[category]
+                if not tasks:
+                    continue
+                    
+                # Header de categoría
+                cat_colors = CATEGORY_COLORS.get(category.lower(), CATEGORY_COLORS['general'])
+                
+                cat_header = QFrame()
+                cat_header.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {cat_colors[1]};
+                        border-radius: 10px;
+                        margin-top: 8px;
+                    }}
+                """)
+                cat_layout = QHBoxLayout(cat_header)
+                cat_layout.setContentsMargins(16, 12, 16, 12)
+                
+                cat_icon = QLabel("📁")
+                cat_icon.setStyleSheet("font-size: 18px;")
+                cat_layout.addWidget(cat_icon)
+                
+                cat_name = QLabel(category.capitalize())
+                cat_name.setStyleSheet(f"""
+                    color: {cat_colors[0]};
+                    font-size: 16px;
+                    font-weight: 700;
+                """)
+                cat_layout.addWidget(cat_name)
+                
+                cat_count = QLabel(f"{len(tasks)} tareas")
+                cat_count.setStyleSheet(f"""
+                    color: {cat_colors[0]};
+                    font-size: 13px;
+                    opacity: 0.8;
+                """)
+                cat_layout.addWidget(cat_count)
+                cat_layout.addStretch()
+                
+                self.tasks_list.addWidget(cat_header)
+                
+                # Tareas de esta categoría
+                for task in tasks:
+                    item = TaskCard(
+                        task['id'], task['title'], task.get('description', ''),
+                        task.get('status', 'pending'), task.get('priority', 'medium'),
+                        task.get('category', 'general'), task.get('assigned_to_name')
+                    )
+                    item.status_changed.connect(self._on_task_status_changed)
+                    self.tasks_list.addWidget(item)
+        else:
+            # Sin agrupación - lista plana
+            tasks = self.db.get_all_tasks(status)
+            
+            if not tasks:
+                self.tasks_empty.show()
+                return
+            self.tasks_empty.hide()
+            
+            for task in tasks:
+                item = TaskCard(
+                    task['id'], task['title'], task.get('description', ''),
+                    task.get('status', 'pending'), task.get('priority', 'medium'),
+                    task.get('category', 'general'), task.get('assigned_to_name')
+                )
+                item.status_changed.connect(self._on_task_status_changed)
+                self.tasks_list.addWidget(item)
+    
+    def _toggle_task_grouping(self):
+        """Alternar entre vista agrupada y lista plana"""
+        current_filter = self.task_filter.currentText()
+        self._load_tasks(current_filter if current_filter != "Todas" else None)
             
     def _filter_tasks(self, filter_text: str):
         self._load_tasks(filter_text if filter_text != "Todas" else None)
@@ -2883,7 +3099,7 @@ class MainWindow(QMainWindow):
                 assigned_to_id = self.db.add_person(task.assigned_to)
             self.db.add_task(
                 task.title, task.description, task.status,
-                task.priority, assigned_to_id, task.source_message
+                task.priority, task.category, assigned_to_id, task.source_message
             )
             
         # Save person profiles
@@ -2928,16 +3144,16 @@ class MainWindow(QMainWindow):
     def _add_task_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Nueva Tarea")
-        dialog.setMinimumWidth(450)
+        dialog.setMinimumWidth(500)
         dialog.setStyleSheet(GLOBAL_STYLE + f"QDialog {{ background-color: {COLORS['bg_secondary']}; }}")
         
         layout = QVBoxLayout(dialog)
-        layout.setSpacing(20)
+        layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
         
         # Title
         title_label = QLabel("Título")
-        title_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 500;")
+        title_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600;")
         layout.addWidget(title_label)
         title_input = QLineEdit()
         title_input.setPlaceholderText("¿Qué necesitas hacer?")
@@ -2945,21 +3161,50 @@ class MainWindow(QMainWindow):
         
         # Description
         desc_label = QLabel("Descripción (opcional)")
-        desc_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 500;")
+        desc_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600;")
         layout.addWidget(desc_label)
         desc_input = QTextEdit()
         desc_input.setPlaceholderText("Añade más detalles...")
-        desc_input.setMaximumHeight(100)
+        desc_input.setMaximumHeight(80)
         layout.addWidget(desc_input)
         
+        # Row for category and priority
+        row_layout = QHBoxLayout()
+        row_layout.setSpacing(16)
+        
+        # Category
+        cat_col = QVBoxLayout()
+        cat_label = QLabel("Categoría")
+        cat_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600;")
+        cat_col.addWidget(cat_label)
+        category_combo = QComboBox()
+        category_combo.addItems(["General", "Mentoría", "Técnico", "Marketing", "Ventas", "Negocio", "Diseño", "Contenido", "Administrativo"])
+        cat_col.addWidget(category_combo)
+        row_layout.addLayout(cat_col)
+        
         # Priority
+        pri_col = QVBoxLayout()
         priority_label = QLabel("Prioridad")
-        priority_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 500;")
-        layout.addWidget(priority_label)
+        priority_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600;")
+        pri_col.addWidget(priority_label)
         priority_combo = QComboBox()
         priority_combo.addItems(["Baja", "Media", "Alta", "Urgente"])
         priority_combo.setCurrentIndex(1)
-        layout.addWidget(priority_combo)
+        pri_col.addWidget(priority_combo)
+        row_layout.addLayout(pri_col)
+        
+        layout.addLayout(row_layout)
+        
+        # Assigned to
+        assigned_label = QLabel("Asignar a")
+        assigned_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600;")
+        layout.addWidget(assigned_label)
+        assigned_combo = QComboBox()
+        assigned_combo.addItem("Sin asignar", None)
+        persons = self.db.get_all_persons(min_messages=1)
+        for person in persons:
+            assigned_combo.addItem(person['name'], person['id'])
+        layout.addWidget(assigned_combo)
         
         # Buttons
         buttons_layout = QHBoxLayout()
@@ -2983,11 +3228,19 @@ class MainWindow(QMainWindow):
         
         if dialog.exec() == QDialog.DialogCode.Accepted and title_input.text().strip():
             priority_map = {"Baja": "low", "Media": "medium", "Alta": "high", "Urgente": "urgent"}
+            category_map = {"General": "general", "Mentoría": "mentoría", "Técnico": "técnico", 
+                          "Marketing": "marketing", "Ventas": "ventas", "Negocio": "negocio",
+                          "Diseño": "diseño", "Contenido": "contenido", "Administrativo": "administrativo"}
+            
+            assigned_id = assigned_combo.currentData()
+            
             self.db.add_task(
                 title_input.text().strip(),
                 desc_input.toPlainText().strip(),
                 "pending",
-                priority_map[priority_combo.currentText()]
+                priority_map[priority_combo.currentText()],
+                category_map[category_combo.currentText()],
+                assigned_id
             )
             self._load_tasks()
             self._update_dashboard()
