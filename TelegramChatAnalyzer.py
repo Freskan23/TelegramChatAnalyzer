@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -1121,75 +1121,84 @@ class StatCard(QFrame):
     def __init__(self, icon: str, title: str, value: str, subtitle: str = "", 
                  color: str = None, parent=None):
         super().__init__(parent)
+        self.icon_color = color
         self._setup_ui(icon, title, value, subtitle, color)
         
     def _setup_ui(self, icon: str, title: str, value: str, subtitle: str, color: str):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS['bg_secondary']};
-                border: 1px solid {COLORS['border_light']};
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
                 border-radius: 16px;
-                padding: 20px;
-            }}
+            }
+            QFrame:hover {
+                border-color: #CBD5E1;
+            }
         """)
         
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(0, 0, 0, 10))
-        shadow.setOffset(0, 2)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 15))
+        shadow.setOffset(0, 4)
         self.setGraphicsEffect(shadow)
         
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
         layout.setContentsMargins(20, 20, 20, 20)
         
         # Header con icono
         header = QHBoxLayout()
         icon_label = QLabel(icon)
         icon_label.setStyleSheet(f"""
-            font-size: 24px;
-            background-color: {color or COLORS['accent_soft']};
-            padding: 12px;
+            font-size: 28px;
+            background-color: {color or '#EEF2FF'};
             border-radius: 12px;
         """)
-        icon_label.setFixedSize(50, 50)
+        icon_label.setFixedSize(52, 52)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.addWidget(icon_label)
         header.addStretch()
         layout.addLayout(header)
         
+        layout.addSpacing(8)
+        
+        # Valor - GRANDE y VISIBLE
+        self.value_label = QLabel(value)
+        self.value_label.setStyleSheet("""
+            color: #1E293B;
+            font-size: 36px;
+            font-weight: 800;
+        """)
+        layout.addWidget(self.value_label)
+        
         # Título
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"""
-            color: {COLORS['text_secondary']};
-            font-size: 13px;
+        title_label.setStyleSheet("""
+            color: #64748B;
+            font-size: 14px;
             font-weight: 500;
         """)
         layout.addWidget(title_label)
         
-        # Valor
-        self.value_label = QLabel(value)
-        self.value_label.setStyleSheet(f"""
-            color: {COLORS['text_primary']};
-            font-size: 32px;
-            font-weight: 700;
-        """)
-        layout.addWidget(self.value_label)
-        
         # Subtítulo
         if subtitle:
             sub_label = QLabel(subtitle)
-            sub_label.setStyleSheet(f"""
-                color: {COLORS['text_muted']};
+            sub_label.setStyleSheet("""
+                color: #94A3B8;
                 font-size: 12px;
             """)
             layout.addWidget(sub_label)
             
-        self.setMinimumWidth(200)
-        self.setMinimumHeight(160)
+        self.setMinimumWidth(180)
+        self.setMinimumHeight(170)
         
     def set_value(self, value: str):
         self.value_label.setText(value)
+        self.value_label.setStyleSheet("""
+            color: #1E293B;
+            font-size: 36px;
+            font-weight: 800;
+        """)
 
 
 class PersonCard(Card):
@@ -1329,26 +1338,27 @@ class TaskCard(QFrame):
         
         # Fondo blanco puro con borde más visible
         self.setStyleSheet(f"""
-            QFrame {{
+            TaskCard {{
                 background-color: #FFFFFF;
-                border: 1px solid {COLORS['border']};
+                border: 1px solid #E2E8F0;
                 border-left: 5px solid {priority_colors[0]};
                 border-radius: 12px;
             }}
-            QFrame:hover {{
+            TaskCard:hover {{
                 border-color: {COLORS['accent']};
                 border-left: 5px solid {priority_colors[0]};
-                background-color: #FAFBFC;
+                background-color: #F8FAFC;
             }}
         """)
+        self.setObjectName("taskCard")
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(14)
         
-        # Checkbox más grande y visible
+        # Checkbox más grande y visible con borde claro
         self.checkbox = QPushButton()
-        self.checkbox.setFixedSize(32, 32)
+        self.checkbox.setFixedSize(28, 28)
         self.checkbox.setCheckable(True)
         self.checkbox.setChecked(status == "completed")
         self._update_checkbox_style()
@@ -1357,131 +1367,139 @@ class TaskCard(QFrame):
         
         # Content
         content_layout = QVBoxLayout()
-        content_layout.setSpacing(10)
+        content_layout.setSpacing(8)
         
         # Título con mejor contraste
         title_label = QLabel(title)
         if status == "completed":
-            title_label.setStyleSheet(f"""
-                color: {COLORS['text_muted']};
-                font-size: 15px;
+            title_label.setStyleSheet("""
+                color: #94A3B8;
+                font-size: 14px;
                 font-weight: 500;
                 text-decoration: line-through;
             """)
         else:
-            title_label.setStyleSheet(f"""
-                color: #1a1a2e;
-                font-size: 15px;
+            title_label.setStyleSheet("""
+                color: #1E293B;
+                font-size: 14px;
                 font-weight: 600;
             """)
         title_label.setWordWrap(True)
         content_layout.addWidget(title_label)
         
-        # Descripción con mejor visibilidad
+        # Descripción con mejor contraste
         if description:
             desc_text = description[:100] + "..." if len(description) > 100 else description
             desc_label = QLabel(desc_text)
-            desc_label.setStyleSheet(f"""
-                color: #4a5568;
+            desc_label.setStyleSheet("""
+                color: #64748B;
                 font-size: 13px;
-                line-height: 1.4;
             """)
             desc_label.setWordWrap(True)
             content_layout.addWidget(desc_label)
             
-        # Meta info con badges
-        meta_layout = QHBoxLayout()
-        meta_layout.setSpacing(10)
+        # Meta info con badges - usando QWidget para mejor control
+        meta_widget = QWidget()
+        meta_widget.setStyleSheet("background: transparent;")
+        meta_layout = QHBoxLayout(meta_widget)
+        meta_layout.setContentsMargins(0, 4, 0, 0)
+        meta_layout.setSpacing(8)
         
         # Responsable destacado
         if assigned_to:
-            assigned_frame = QFrame()
-            assigned_frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {COLORS['accent_soft']};
-                    border-radius: 6px;
-                    padding: 2px;
+            assigned_widget = QWidget()
+            assigned_widget.setStyleSheet(f"""
+                QWidget {{
+                    background-color: #EEF2FF;
+                    border-radius: 14px;
                 }}
             """)
-            assigned_inner = QHBoxLayout(assigned_frame)
-            assigned_inner.setContentsMargins(8, 4, 10, 4)
-            assigned_inner.setSpacing(6)
+            assigned_layout = QHBoxLayout(assigned_widget)
+            assigned_layout.setContentsMargins(4, 4, 10, 4)
+            assigned_layout.setSpacing(6)
             
             # Avatar pequeño
             avatar = QLabel(assigned_to[0].upper() if assigned_to else "?")
-            avatar.setFixedSize(22, 22)
+            avatar.setFixedSize(20, 20)
             avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            avatar.setStyleSheet(f"""
-                background-color: {COLORS['accent']};
+            avatar.setStyleSheet("""
+                background-color: #6366F1;
                 color: white;
-                border-radius: 11px;
-                font-size: 11px;
+                border-radius: 10px;
+                font-size: 10px;
                 font-weight: 700;
             """)
-            assigned_inner.addWidget(avatar)
+            assigned_layout.addWidget(avatar)
             
             name_label = QLabel(assigned_to)
-            name_label.setStyleSheet(f"""
-                color: {COLORS['accent']};
+            name_label.setStyleSheet("""
+                color: #4F46E5;
                 font-size: 12px;
                 font-weight: 600;
+                background: transparent;
             """)
-            assigned_inner.addWidget(name_label)
-            meta_layout.addWidget(assigned_frame)
+            assigned_layout.addWidget(name_label)
+            meta_layout.addWidget(assigned_widget)
         
         # Badge de categoría
         if category and category.lower() != 'general':
-            cat_badge = QLabel(category.capitalize())
-            cat_badge.setStyleSheet(f"""
-                background-color: {category_colors[1]};
-                color: {category_colors[0]};
-                padding: 4px 10px;
-                border-radius: 6px;
-                font-size: 11px;
-                font-weight: 600;
+            cat_widget = QLabel(category.capitalize())
+            cat_widget.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {category_colors[1]};
+                    color: {category_colors[0]};
+                    padding: 4px 12px;
+                    border-radius: 12px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }}
             """)
-            meta_layout.addWidget(cat_badge)
+            meta_layout.addWidget(cat_widget)
             
         # Badge de prioridad
         priority_names = {'low': 'Baja', 'medium': 'Media', 'high': 'Alta', 'urgent': 'Urgente'}
-        priority_badge = QLabel(priority_names.get(priority, priority.capitalize()))
-        priority_badge.setStyleSheet(f"""
-            background-color: {priority_colors[1]};
-            color: {priority_colors[0]};
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
+        priority_widget = QLabel(priority_names.get(priority, priority.capitalize()))
+        priority_widget.setStyleSheet(f"""
+            QLabel {{
+                background-color: {priority_colors[1]};
+                color: {priority_colors[0]};
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
         """)
-        meta_layout.addWidget(priority_badge)
+        meta_layout.addWidget(priority_widget)
         
         meta_layout.addStretch()
-        content_layout.addLayout(meta_layout)
+        content_layout.addWidget(meta_widget)
         
         layout.addLayout(content_layout, 1)
         
     def _update_checkbox_style(self):
         if self.checkbox.isChecked():
-            self.checkbox.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {COLORS['success']};
+            self.checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: #10B981;
                     border: none;
                     border-radius: 14px;
                     color: white;
-                    font-size: 14px;
-                }}
+                    font-size: 16px;
+                    font-weight: bold;
+                }
             """)
             self.checkbox.setText("✓")
         else:
-            self.checkbox.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    border: 2px solid {COLORS['border']};
+            self.checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: #F8FAFC;
+                    border: 2px solid #CBD5E1;
                     border-radius: 14px;
-                }}
-                QPushButton:hover {{
-                    border-color: {COLORS['accent']};
-                }}
+                }
+                QPushButton:hover {
+                    border-color: #6366F1;
+                    background-color: #EEF2FF;
+                }
             """)
             self.checkbox.setText("")
             
@@ -2615,36 +2633,50 @@ class MainWindow(QMainWindow):
         persons = self.db.get_all_persons(min_messages=1)[:4]
         for person in persons:
             person_frame = QFrame()
-            person_frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {COLORS['bg_primary']};
-                    border-radius: 10px;
-                    padding: 12px;
-                }}
+            person_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #F8FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 12px;
+                }
+                QFrame:hover {
+                    background-color: #F1F5F9;
+                    border-color: #CBD5E1;
+                }
             """)
             p_layout = QHBoxLayout(person_frame)
-            p_layout.setContentsMargins(12, 8, 12, 8)
+            p_layout.setContentsMargins(14, 12, 14, 12)
             
             role_colors = ROLE_COLORS.get(person.get('role', 'desconocido').lower(), ROLE_COLORS['desconocido'])
             avatar = QLabel(person['name'][0].upper())
-            avatar.setFixedSize(36, 36)
+            avatar.setFixedSize(40, 40)
             avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
             avatar.setStyleSheet(f"""
                 background-color: {role_colors[1]};
                 color: {role_colors[0]};
-                border-radius: 18px;
-                font-weight: 600;
+                border-radius: 20px;
+                font-weight: 700;
+                font-size: 16px;
             """)
             p_layout.addWidget(avatar)
             
             info = QVBoxLayout()
             info.setSpacing(2)
             name_label = QLabel(person['name'])
-            name_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 500;")
+            name_label.setStyleSheet("""
+                color: #1E293B;
+                font-weight: 600;
+                font-size: 14px;
+            """)
             info.addWidget(name_label)
             
-            role_label = QLabel(f"{person.get('role', 'desconocido').capitalize()} · {person.get('total_messages', 0)} msgs")
-            role_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            role_text = person.get('role', 'desconocido').capitalize()
+            msgs_count = person.get('total_messages', 0)
+            role_label = QLabel(f"{role_text} · {msgs_count} msgs")
+            role_label.setStyleSheet("""
+                color: #64748B;
+                font-size: 12px;
+            """)
             info.addWidget(role_label)
             p_layout.addLayout(info)
             p_layout.addStretch()
