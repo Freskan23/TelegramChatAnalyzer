@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -395,6 +395,52 @@ class Database:
             )
         ''')
         
+        # Tabla de enlaces compartidos
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL,
+                title TEXT,
+                link_type TEXT DEFAULT 'general',
+                context TEXT,
+                shared_by INTEGER,
+                mention_count INTEGER DEFAULT 1,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (shared_by) REFERENCES persons(id)
+            )
+        ''')
+        
+        # Tabla de objetivos personales
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS objectives (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                target_value REAL,
+                current_value REAL DEFAULT 0,
+                unit TEXT,
+                status TEXT DEFAULT 'in_progress',
+                due_date TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (person_id) REFERENCES persons(id)
+            )
+        ''')
+        
+        # Tabla de proyectos
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'active',
+                client_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES persons(id)
+            )
+        ''')
+        
         self.conn.commit()
         
     def add_chat(self, name: str, chat_type: str = 'group', file_path: str = None) -> int:
@@ -666,10 +712,121 @@ class Database:
         return result['value'] if result else default
     
     def clear_all_data(self):
-        tables = ['messages', 'person_skills', 'tasks', 'patterns', 'persons', 'skills', 'chats']
+        tables = ['messages', 'person_skills', 'tasks', 'patterns', 'persons', 'skills', 'chats', 'links', 'objectives', 'projects']
         for table in tables:
-            self.cursor.execute(f'DELETE FROM {table}')
+            try:
+                self.cursor.execute(f'DELETE FROM {table}')
+            except:
+                pass
         self.conn.commit()
+    
+    # === FUNCIONES DE ENLACES ===
+    def add_link(self, url: str, title: str = None, link_type: str = 'general', 
+                 context: str = None, shared_by: int = None) -> int:
+        # Verificar si ya existe
+        self.cursor.execute('SELECT id, mention_count FROM links WHERE url = ?', (url,))
+        existing = self.cursor.fetchone()
+        if existing:
+            self.cursor.execute('''
+                UPDATE links SET mention_count = mention_count + 1, last_seen = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (existing['id'],))
+            self.conn.commit()
+            return existing['id']
+        else:
+            self.cursor.execute('''
+                INSERT INTO links (url, title, link_type, context, shared_by)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (url, title, link_type, context, shared_by))
+            self.conn.commit()
+            return self.cursor.lastrowid
+    
+    def get_all_links(self) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT l.*, p.name as shared_by_name
+            FROM links l
+            LEFT JOIN persons p ON l.shared_by = p.id
+            ORDER BY l.mention_count DESC, l.last_seen DESC
+        ''')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_links_by_type(self, link_type: str) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT l.*, p.name as shared_by_name
+            FROM links l
+            LEFT JOIN persons p ON l.shared_by = p.id
+            WHERE l.link_type = ?
+            ORDER BY l.mention_count DESC
+        ''', (link_type,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_links_by_person(self, person_id: int) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT * FROM links WHERE shared_by = ?
+            ORDER BY mention_count DESC, last_seen DESC
+        ''', (person_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    # === FUNCIONES DE PROYECTOS ===
+    def add_project(self, name: str, description: str = None, client_id: int = None) -> int:
+        self.cursor.execute('''
+            INSERT INTO projects (name, description, client_id)
+            VALUES (?, ?, ?)
+        ''', (name, description, client_id))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_all_projects(self) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT p.*, c.name as client_name
+            FROM projects p
+            LEFT JOIN persons c ON p.client_id = c.id
+            ORDER BY p.created_at DESC
+        ''')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    # === FUNCIONES DE OBJETIVOS ===
+    def add_objective(self, person_id: int, title: str, description: str = None,
+                      target_value: float = 100, unit: str = '%', due_date: str = None) -> int:
+        self.cursor.execute('''
+            INSERT INTO objectives (person_id, title, description, target_value, unit, due_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (person_id, title, description, target_value, unit, due_date))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_objectives_for_person(self, person_id: int) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT * FROM objectives WHERE person_id = ?
+            ORDER BY status ASC, due_date ASC
+        ''', (person_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def update_objective_progress(self, objective_id: int, current_value: float):
+        self.cursor.execute('''
+            UPDATE objectives SET current_value = ? WHERE id = ?
+        ''', (current_value, objective_id))
+        self.conn.commit()
+    
+    # === FUNCIONES DE ACTIVIDAD ===
+    def get_activity_by_date(self, person_id: int = None) -> List[Dict]:
+        if person_id:
+            self.cursor.execute('''
+                SELECT DATE(timestamp) as date, COUNT(*) as count
+                FROM messages WHERE person_id = ?
+                GROUP BY DATE(timestamp)
+                ORDER BY date DESC
+                LIMIT 30
+            ''', (person_id,))
+        else:
+            self.cursor.execute('''
+                SELECT DATE(timestamp) as date, COUNT(*) as count
+                FROM messages
+                GROUP BY DATE(timestamp)
+                ORDER BY date DESC
+                LIMIT 30
+            ''')
+        return [dict(row) for row in self.cursor.fetchall()]
 
 
 # ============================================================
@@ -2151,15 +2308,15 @@ class MainWindow(QMainWindow):
         page.setStyleSheet(f"background-color: {COLORS['bg_primary']};")
         
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(40, 40, 40, 40)
-        layout.setSpacing(24)
+        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setSpacing(16)
         
-        # Header
+        # Header con selector
         header_layout = QHBoxLayout()
         header = QLabel("Mi Perfil")
         header.setStyleSheet(f"""
             color: {COLORS['text_primary']};
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 700;
         """)
         header_layout.addWidget(header)
@@ -2167,13 +2324,395 @@ class MainWindow(QMainWindow):
         
         # Selector de usuario
         self.me_selector = QComboBox()
-        self.me_selector.setFixedWidth(250)
+        self.me_selector.setFixedWidth(200)
         self.me_selector.setPlaceholderText("Selecciona tu usuario...")
         self.me_selector.currentIndexChanged.connect(self._on_me_selected)
         header_layout.addWidget(self.me_selector)
         layout.addLayout(header_layout)
         
-        # Scroll area for profile content
+        # Sistema de pestañas
+        self.profile_tabs_container = QHBoxLayout()
+        self.profile_tabs_container.setSpacing(0)
+        
+        self.profile_tab_buttons = []
+        tab_names = [
+            ("📊", "Resumen"),
+            ("⭐", "Valoraciones"),
+            ("📋", "Tareas"),
+            ("📁", "Proyectos"),
+            ("🔗", "Enlaces"),
+            ("📈", "Actividad"),
+            ("🎯", "Objetivos")
+        ]
+        
+        for i, (icon, name) in enumerate(tab_names):
+            btn = QPushButton(f"{icon} {name}")
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda checked, idx=i: self._switch_profile_tab(idx))
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #64748B;
+                    border: none;
+                    border-bottom: 2px solid transparent;
+                    padding: 12px 16px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    color: #3B82F6;
+                }
+                QPushButton:checked {
+                    color: #3B82F6;
+                    border-bottom: 2px solid #3B82F6;
+                    font-weight: 600;
+                }
+            """)
+            self.profile_tab_buttons.append(btn)
+            self.profile_tabs_container.addWidget(btn)
+        
+        self.profile_tabs_container.addStretch()
+        layout.addLayout(self.profile_tabs_container)
+        
+        # Línea separadora
+        separator = QFrame()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: #E2E8F0;")
+        layout.addWidget(separator)
+        
+        # Contenedor de contenido de pestañas
+        self.profile_content_stack = QStackedWidget()
+        self.profile_content_stack.setStyleSheet("background: transparent;")
+        
+        # Crear las 7 páginas de pestañas
+        self.profile_tab_pages = []
+        for i in range(7):
+            tab_page = QWidget()
+            tab_page.setStyleSheet("background: transparent;")
+            tab_layout = QVBoxLayout(tab_page)
+            tab_layout.setContentsMargins(0, 16, 0, 0)
+            tab_layout.setSpacing(16)
+            self.profile_tab_pages.append(tab_layout)
+            self.profile_content_stack.addWidget(tab_page)
+        
+        layout.addWidget(self.profile_content_stack, 1)
+        
+        # Estado vacío inicial
+        self.profile_empty = EmptyState(
+            "👤",
+            "Selecciona tu usuario",
+            "Elige tu nombre del selector para ver tu evaluación personal.",
+        )
+        self.profile_tab_pages[0].addWidget(self.profile_empty)
+        
+        return page
+    
+    def _switch_profile_tab(self, index: int):
+        # Actualizar botones
+        for i, btn in enumerate(self.profile_tab_buttons):
+            btn.setChecked(i == index)
+        # Cambiar página
+        self.profile_content_stack.setCurrentIndex(index)
+        # Cargar contenido si es necesario
+        self._load_profile_tab_content(index)
+    
+    def _load_profile_tab_content(self, tab_index: int):
+        me = self.db.get_me()
+        if not me:
+            return
+        
+        # Limpiar contenido anterior
+        layout = self.profile_tab_pages[tab_index]
+        self._clear_layout(layout)
+        
+        if tab_index == 0:
+            self._load_profile_resumen(layout, me)
+        elif tab_index == 1:
+            self._load_profile_valoraciones(layout, me)
+        elif tab_index == 2:
+            self._load_profile_tareas(layout, me)
+        elif tab_index == 3:
+            self._load_profile_proyectos(layout, me)
+        elif tab_index == 4:
+            self._load_profile_enlaces(layout, me)
+        elif tab_index == 5:
+            self._load_profile_actividad(layout, me)
+        elif tab_index == 6:
+            self._load_profile_objetivos(layout, me)
+    
+    def _load_profile_resumen(self, layout: QVBoxLayout, me: dict):
+        me_data = self.db.get_person_with_skills(me['id'])
+        me_stats = self.db.get_person_stats(me['id'])
+        
+        # Tarjeta de perfil compacta
+        profile_card = QFrame()
+        profile_card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+        """)
+        profile_layout = QHBoxLayout(profile_card)
+        profile_layout.setContentsMargins(20, 20, 20, 20)
+        profile_layout.setSpacing(16)
+        
+        # Avatar
+        role_colors = ROLE_COLORS.get(me.get('role', 'desconocido').lower(), ROLE_COLORS['desconocido'])
+        avatar = QLabel(me['name'][0].upper())
+        avatar.setFixedSize(60, 60)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar.setStyleSheet(f"""
+            background-color: {role_colors[1]};
+            color: {role_colors[0]};
+            border-radius: 30px;
+            font-size: 24px;
+            font-weight: 700;
+        """)
+        profile_layout.addWidget(avatar)
+        
+        # Info
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+        
+        name_row = QHBoxLayout()
+        name_label = QLabel(me['name'])
+        name_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        name_row.addWidget(name_label)
+        
+        you_badge = QLabel("TÚ")
+        you_badge.setStyleSheet("""
+            background-color: #3B82F6;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+        """)
+        name_row.addWidget(you_badge)
+        name_row.addStretch()
+        info_layout.addLayout(name_row)
+        
+        role_label = QLabel(me.get('role', 'Desconocido').capitalize())
+        role_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
+        info_layout.addWidget(role_label)
+        
+        profile_layout.addLayout(info_layout, 1)
+        
+        # Stats en el header
+        stats_data = [
+            (str(me_stats.get('total_messages', 0)), "Mensajes"),
+            (str(me_stats.get('total_tasks', 0)), "Tareas"),
+            (str(me_stats.get('completed_tasks', 0)), "Completadas"),
+            (f"{me_stats.get('avg_skill_score', 0):.0f}%", "Promedio")
+        ]
+        for value, label in stats_data:
+            stat_box = QVBoxLayout()
+            stat_box.setSpacing(0)
+            v = QLabel(value)
+            v.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 20px; font-weight: 700;")
+            v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_box.addWidget(v)
+            l = QLabel(label)
+            l.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_box.addWidget(l)
+            profile_layout.addLayout(stat_box)
+        
+        layout.addWidget(profile_card)
+        
+        # Descripción
+        if me_data and me_data.get('profile_summary'):
+            desc_card = QFrame()
+            desc_card.setStyleSheet("""
+                QFrame {
+                    background-color: #F8FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 12px;
+                }
+            """)
+            desc_layout = QVBoxLayout(desc_card)
+            desc_layout.setContentsMargins(20, 16, 20, 16)
+            desc_text = QLabel(me_data['profile_summary'])
+            desc_text.setWordWrap(True)
+            desc_text.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; line-height: 1.5;")
+            desc_layout.addWidget(desc_text)
+            layout.addWidget(desc_card)
+        
+        # Grid de resumen rápido
+        grid_layout = QHBoxLayout()
+        grid_layout.setSpacing(16)
+        
+        # Top 3 habilidades
+        skills_card = QFrame()
+        skills_card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+        """)
+        skills_layout = QVBoxLayout(skills_card)
+        skills_layout.setContentsMargins(16, 16, 16, 16)
+        skills_layout.setSpacing(12)
+        
+        skills_header = QLabel("⭐ Top Habilidades")
+        skills_header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 600;")
+        skills_layout.addWidget(skills_header)
+        
+        if me_data and me_data.get('skills'):
+            for skill in me_data['skills'][:3]:
+                skill_row = QHBoxLayout()
+                skill_name = QLabel(skill['name'])
+                skill_name.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+                skill_row.addWidget(skill_name)
+                skill_score = QLabel(f"{skill['score']:.0f}%")
+                skill_score.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+                skill_row.addWidget(skill_score)
+                skills_layout.addLayout(skill_row)
+        else:
+            no_skills = QLabel("Sin habilidades aún")
+            no_skills.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            skills_layout.addWidget(no_skills)
+        
+        skills_layout.addStretch()
+        grid_layout.addWidget(skills_card)
+        
+        # Tareas pendientes
+        tasks_card = QFrame()
+        tasks_card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+        """)
+        tasks_layout = QVBoxLayout(tasks_card)
+        tasks_layout.setContentsMargins(16, 16, 16, 16)
+        tasks_layout.setSpacing(12)
+        
+        tasks_header = QLabel("📋 Tareas Pendientes")
+        tasks_header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 600;")
+        tasks_layout.addWidget(tasks_header)
+        
+        my_tasks = self.db.get_tasks_for_person(me['id'])
+        pending_tasks = [t for t in my_tasks if t['status'] != 'completed'][:3]
+        if pending_tasks:
+            for task in pending_tasks:
+                task_label = QLabel(f"• {task['title'][:40]}..." if len(task['title']) > 40 else f"• {task['title']}")
+                task_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+                tasks_layout.addWidget(task_label)
+        else:
+            no_tasks = QLabel("🎉 Sin tareas pendientes")
+            no_tasks.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            tasks_layout.addWidget(no_tasks)
+        
+        tasks_layout.addStretch()
+        grid_layout.addWidget(tasks_card)
+        
+        layout.addLayout(grid_layout)
+        layout.addStretch()
+    
+    def _load_profile_valoraciones(self, layout: QVBoxLayout, me: dict):
+        me_data = self.db.get_person_with_skills(me['id'])
+        
+        header = QLabel("⭐ Mis Habilidades y Valoraciones")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        layout.addWidget(header)
+        
+        if me_data and me_data.get('skills'):
+            # Scroll para habilidades
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+            
+            scroll_content = QWidget()
+            scroll_content.setStyleSheet("background: transparent;")
+            skills_layout = QVBoxLayout(scroll_content)
+            skills_layout.setSpacing(12)
+            
+            for skill in me_data['skills']:
+                skill_card = QFrame()
+                skill_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #FFFFFF;
+                        border: 1px solid #E2E8F0;
+                        border-radius: 10px;
+                    }
+                """)
+                skill_layout = QVBoxLayout(skill_card)
+                skill_layout.setContentsMargins(16, 12, 16, 12)
+                skill_layout.setSpacing(8)
+                
+                # Nombre y score
+                row = QHBoxLayout()
+                name = QLabel(skill['name'])
+                name.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 600;")
+                row.addWidget(name)
+                
+                score = QLabel(f"{skill['score']:.0f}%")
+                score_color = "#10B981" if skill['score'] >= 80 else "#F59E0B" if skill['score'] >= 60 else "#EF4444"
+                score.setStyleSheet(f"color: {score_color}; font-size: 14px; font-weight: 700;")
+                row.addWidget(score)
+                skill_layout.addLayout(row)
+                
+                # Barra de progreso
+                progress_bg = QFrame()
+                progress_bg.setFixedHeight(8)
+                progress_bg.setStyleSheet("background-color: #E2E8F0; border-radius: 4px;")
+                progress_layout = QHBoxLayout(progress_bg)
+                progress_layout.setContentsMargins(0, 0, 0, 0)
+                
+                progress_fill = QFrame()
+                progress_fill.setFixedHeight(8)
+                progress_fill.setFixedWidth(int(skill['score'] * 3))  # Max 300px
+                progress_fill.setStyleSheet(f"background-color: {score_color}; border-radius: 4px;")
+                progress_layout.addWidget(progress_fill)
+                progress_layout.addStretch()
+                
+                skill_layout.addWidget(progress_bg)
+                skills_layout.addWidget(skill_card)
+            
+            skills_layout.addStretch()
+            scroll.setWidget(scroll_content)
+            layout.addWidget(scroll, 1)
+        else:
+            empty = EmptyState("⭐", "Sin valoraciones", "Importa un chat y análiza con IA para obtener valoraciones.")
+            layout.addWidget(empty)
+    
+    def _load_profile_tareas(self, layout: QVBoxLayout, me: dict):
+        header_row = QHBoxLayout()
+        header = QLabel("📋 Mis Tareas")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+        
+        # Filtros
+        filter_btns = QHBoxLayout()
+        filter_btns.setSpacing(8)
+        filters = [("Todas", "all"), ("Pendientes", "pending"), ("Completadas", "completed")]
+        for label, status in filters:
+            btn = QPushButton(label)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #F1F5F9;
+                    color: #64748B;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #E2E8F0;
+                }
+            """)
+            filter_btns.addLayout(filter_btns)
+        header_row.addLayout(filter_btns)
+        layout.addLayout(header_row)
+        
+        # Lista de tareas
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2181,22 +2720,379 @@ class MainWindow(QMainWindow):
         
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
-        self.profile_layout = QVBoxLayout(scroll_content)
-        self.profile_layout.setSpacing(24)
-        self.profile_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        tasks_layout = QVBoxLayout(scroll_content)
+        tasks_layout.setSpacing(8)
         
+        my_tasks = self.db.get_tasks_for_person(me['id'])
+        if my_tasks:
+            for task in my_tasks:
+                task_card = self._create_task_item(task)
+                tasks_layout.addWidget(task_card)
+        else:
+            empty = EmptyState("📋", "Sin tareas", "No tienes tareas asignadas aún.")
+            tasks_layout.addWidget(empty)
+        
+        tasks_layout.addStretch()
         scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, 1)
+    
+    def _create_task_item(self, task: dict) -> QFrame:
+        card = QFrame()
+        is_completed = task['status'] == 'completed'
+        priority = task.get('priority', 'medium')
+        priority_colors = {
+            'urgent': '#DC2626',
+            'high': '#F59E0B',
+            'medium': '#3B82F6',
+            'low': '#10B981'
+        }
+        border_color = priority_colors.get(priority, '#3B82F6')
         
-        # Empty state
-        self.profile_empty = EmptyState(
-            "👤",
-            "Selecciona tu usuario",
-            "Elige tu nombre del selector para ver tu evaluación personal.",
-        )
-        self.profile_layout.addWidget(self.profile_empty)
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-left: 4px solid {border_color};
+                border-radius: 8px;
+            }}
+        """)
         
-        return page
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+        
+        # Checkbox
+        checkbox = QLabel("✓" if is_completed else "")
+        checkbox.setFixedSize(24, 24)
+        checkbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        checkbox.setStyleSheet(f"""
+            background-color: {'#10B981' if is_completed else '#FFFFFF'};
+            border: 2px solid {'#10B981' if is_completed else '#E2E8F0'};
+            border-radius: 6px;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+        """)
+        layout.addWidget(checkbox)
+        
+        # Info
+        info = QVBoxLayout()
+        info.setSpacing(4)
+        
+        title = QLabel(task['title'])
+        title.setStyleSheet(f"""
+            color: {COLORS['text_primary']};
+            font-size: 14px;
+            font-weight: 500;
+            {'text-decoration: line-through;' if is_completed else ''}
+        """)
+        info.addWidget(title)
+        
+        if task.get('description'):
+            desc = QLabel(task['description'][:80] + '...' if len(task.get('description', '')) > 80 else task.get('description', ''))
+            desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            info.addWidget(desc)
+        
+        layout.addLayout(info, 1)
+        
+        # Badge de prioridad
+        priority_labels = {'urgent': 'Urgente', 'high': 'Alta', 'medium': 'Media', 'low': 'Baja'}
+        priority_bg = {'urgent': '#FEE2E2', 'high': '#FEF3C7', 'medium': '#DBEAFE', 'low': '#D1FAE5'}
+        badge = QLabel(priority_labels.get(priority, 'Media'))
+        badge.setStyleSheet(f"""
+            background-color: {priority_bg.get(priority, '#DBEAFE')};
+            color: {border_color};
+            padding: 4px 10px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        """)
+        layout.addWidget(badge)
+        
+        return card
+    
+    def _load_profile_proyectos(self, layout: QVBoxLayout, me: dict):
+        header = QLabel("📁 Mis Proyectos")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        layout.addWidget(header)
+        
+        projects = self.db.get_all_projects()
+        if projects:
+            for project in projects:
+                project_card = QFrame()
+                project_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #FFFFFF;
+                        border: 1px solid #E2E8F0;
+                        border-radius: 12px;
+                    }
+                """)
+                p_layout = QVBoxLayout(project_card)
+                p_layout.setContentsMargins(16, 16, 16, 16)
+                
+                name = QLabel(project['name'])
+                name.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 16px; font-weight: 600;")
+                p_layout.addWidget(name)
+                
+                if project.get('description'):
+                    desc = QLabel(project['description'])
+                    desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
+                    desc.setWordWrap(True)
+                    p_layout.addWidget(desc)
+                
+                layout.addWidget(project_card)
+        else:
+            empty = EmptyState("📁", "Sin proyectos", "Los proyectos se detectarán automáticamente de tus conversaciones.")
+            layout.addWidget(empty)
+        
+        layout.addStretch()
+    
+    def _load_profile_enlaces(self, layout: QVBoxLayout, me: dict):
+        header = QLabel("🔗 Enlaces Compartidos")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        layout.addWidget(header)
+        
+        # Filtros por tipo
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        link_types = [("Todos", "all"), ("🛠️ Herramientas", "tool"), ("📚 Recursos", "resource"), 
+                      ("🎓 Tutoriales", "tutorial"), ("📰 Artículos", "article")]
+        for label, ltype in link_types:
+            btn = QPushButton(label)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #F1F5F9;
+                    color: #64748B;
+                    border: none;
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #E2E8F0;
+                }
+            """)
+            filter_row.addWidget(btn)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+        
+        # Lista de enlaces
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        links_layout = QVBoxLayout(scroll_content)
+        links_layout.setSpacing(8)
+        
+        links = self.db.get_all_links()
+        if links:
+            for link in links:
+                link_card = QFrame()
+                link_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #FFFFFF;
+                        border: 1px solid #E2E8F0;
+                        border-radius: 10px;
+                    }
+                    QFrame:hover {
+                        border-color: #3B82F6;
+                    }
+                """)
+                l_layout = QVBoxLayout(link_card)
+                l_layout.setContentsMargins(16, 12, 16, 12)
+                l_layout.setSpacing(6)
+                
+                # URL y tipo
+                top_row = QHBoxLayout()
+                url_label = QLabel(link['url'][:60] + '...' if len(link['url']) > 60 else link['url'])
+                url_label.setStyleSheet("color: #3B82F6; font-size: 13px; font-weight: 500;")
+                top_row.addWidget(url_label)
+                
+                type_badge = QLabel(link.get('link_type', 'general').capitalize())
+                type_badge.setStyleSheet("""
+                    background-color: #EEF2FF;
+                    color: #4F46E5;
+                    padding: 2px 8px;
+                    border-radius: 6px;
+                    font-size: 10px;
+                """)
+                top_row.addWidget(type_badge)
+                l_layout.addLayout(top_row)
+                
+                # Contexto
+                if link.get('context'):
+                    context = QLabel(link['context'])
+                    context.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+                    context.setWordWrap(True)
+                    l_layout.addWidget(context)
+                
+                # Info
+                info_row = QHBoxLayout()
+                shared_by = QLabel(f"👤 {link.get('shared_by_name', 'Desconocido')}")
+                shared_by.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+                info_row.addWidget(shared_by)
+                
+                mentions = QLabel(f"🔁 {link.get('mention_count', 1)} veces")
+                mentions.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+                info_row.addWidget(mentions)
+                info_row.addStretch()
+                l_layout.addLayout(info_row)
+                
+                links_layout.addWidget(link_card)
+        else:
+            empty = EmptyState("🔗", "Sin enlaces", "Los enlaces se extraerán automáticamente de tus conversaciones.")
+            links_layout.addWidget(empty)
+        
+        links_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+    
+    def _load_profile_actividad(self, layout: QVBoxLayout, me: dict):
+        header = QLabel("📈 Mi Actividad")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        layout.addWidget(header)
+        
+        activity = self.db.get_activity_by_date(me['id'])
+        
+        if activity:
+            # Gráfico simple de actividad
+            chart_card = QFrame()
+            chart_card.setStyleSheet("""
+                QFrame {
+                    background-color: #FFFFFF;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 12px;
+                }
+            """)
+            chart_layout = QVBoxLayout(chart_card)
+            chart_layout.setContentsMargins(20, 20, 20, 20)
+            
+            chart_header = QLabel("Mensajes por día (últimos 30 días)")
+            chart_header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 600;")
+            chart_layout.addWidget(chart_header)
+            
+            # Barras simples
+            bars_layout = QHBoxLayout()
+            bars_layout.setSpacing(2)
+            max_count = max([a['count'] for a in activity]) if activity else 1
+            
+            for day in activity[:14]:  # Últimos 14 días
+                bar_container = QVBoxLayout()
+                bar_container.setSpacing(2)
+                
+                bar = QFrame()
+                height = int((day['count'] / max_count) * 60) if max_count > 0 else 0
+                bar.setFixedSize(16, max(height, 4))
+                bar.setStyleSheet("background-color: #3B82F6; border-radius: 2px;")
+                bar_container.addStretch()
+                bar_container.addWidget(bar)
+                
+                bars_layout.addLayout(bar_container)
+            
+            bars_layout.addStretch()
+            chart_layout.addLayout(bars_layout)
+            
+            layout.addWidget(chart_card)
+            
+            # Lista de actividad reciente
+            for day in activity[:7]:
+                day_label = QLabel(f"📅 {day['date']}: {day['count']} mensajes")
+                day_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; padding: 8px 0;")
+                layout.addWidget(day_label)
+        else:
+            empty = EmptyState("📈", "Sin actividad", "Importa un chat para ver tu actividad.")
+            layout.addWidget(empty)
+        
+        layout.addStretch()
+    
+    def _load_profile_objetivos(self, layout: QVBoxLayout, me: dict):
+        header_row = QHBoxLayout()
+        header = QLabel("🎯 Mis Objetivos")
+        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+        
+        add_btn = QPushButton("+ Nuevo Objetivo")
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3B82F6;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #2563EB;
+            }
+        """)
+        add_btn.clicked.connect(lambda: self._add_objective(me['id']))
+        header_row.addWidget(add_btn)
+        layout.addLayout(header_row)
+        
+        objectives = self.db.get_objectives_for_person(me['id'])
+        
+        if objectives:
+            for obj in objectives:
+                obj_card = QFrame()
+                obj_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #FFFFFF;
+                        border: 1px solid #E2E8F0;
+                        border-radius: 12px;
+                    }
+                """)
+                o_layout = QVBoxLayout(obj_card)
+                o_layout.setContentsMargins(16, 16, 16, 16)
+                o_layout.setSpacing(10)
+                
+                # Título
+                title = QLabel(obj['title'])
+                title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 15px; font-weight: 600;")
+                o_layout.addWidget(title)
+                
+                # Progreso
+                progress = (obj['current_value'] / obj['target_value'] * 100) if obj['target_value'] > 0 else 0
+                progress_row = QHBoxLayout()
+                
+                progress_bg = QFrame()
+                progress_bg.setFixedHeight(10)
+                progress_bg.setStyleSheet("background-color: #E2E8F0; border-radius: 5px;")
+                progress_inner = QHBoxLayout(progress_bg)
+                progress_inner.setContentsMargins(0, 0, 0, 0)
+                
+                progress_fill = QFrame()
+                progress_fill.setFixedHeight(10)
+                progress_fill.setFixedWidth(int(progress * 2))  # Max 200px
+                progress_color = "#10B981" if progress >= 100 else "#3B82F6"
+                progress_fill.setStyleSheet(f"background-color: {progress_color}; border-radius: 5px;")
+                progress_inner.addWidget(progress_fill)
+                progress_inner.addStretch()
+                
+                progress_row.addWidget(progress_bg, 1)
+                
+                progress_label = QLabel(f"{obj['current_value']:.0f}/{obj['target_value']:.0f} {obj.get('unit', '')}")
+                progress_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px; margin-left: 8px;")
+                progress_row.addWidget(progress_label)
+                
+                o_layout.addLayout(progress_row)
+                layout.addWidget(obj_card)
+        else:
+            empty = EmptyState("🎯", "Sin objetivos", "Crea objetivos para hacer seguimiento de tu progreso.")
+            layout.addWidget(empty)
+        
+        layout.addStretch()
+    
+    def _add_objective(self, person_id: int):
+        from PyQt6.QtWidgets import QInputDialog
+        title, ok = QInputDialog.getText(self, "Nuevo Objetivo", "Título del objetivo:")
+        if ok and title:
+            self.db.add_objective(person_id, title)
+            self._load_profile_tab_content(6)  # Recargar pestaña de objetivos
         
     def _create_persons_page(self) -> QWidget:
         page = QWidget()
@@ -2805,176 +3701,24 @@ class MainWindow(QMainWindow):
             self._load_my_profile()
             
     def _load_my_profile(self):
-        # Clear existing content completely
-        while self.profile_layout.count():
-            item = self.profile_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-            elif item.layout():
-                self._clear_layout(item.layout())
-        
+        # Cargar la primera pestaña (Resumen) por defecto
         me = self.db.get_me()
         if not me:
-            empty_state = EmptyState(
-                "👤",
-                "Selecciona tu usuario",
-                "Elige tu nombre del selector para ver tu evaluación personal.",
-            )
-            self.profile_layout.addWidget(empty_state)
+            # Limpiar todas las pestañas y mostrar estado vacío
+            for i, tab_layout in enumerate(self.profile_tab_pages):
+                self._clear_layout(tab_layout)
+                if i == 0:
+                    empty_state = EmptyState(
+                        "👤",
+                        "Selecciona tu usuario",
+                        "Elige tu nombre del selector para ver tu evaluación personal.",
+                    )
+                    tab_layout.addWidget(empty_state)
             return
-            
-        me_data = self.db.get_person_with_skills(me['id'])
-        me_stats = self.db.get_person_stats(me['id'])
         
-        # Profile header card
-        header_card = Card()
-        header_layout = QHBoxLayout(header_card)
-        header_layout.setSpacing(24)
-        
-        role_colors = ROLE_COLORS.get(me.get('role', 'desconocido').lower(), ROLE_COLORS['desconocido'])
-        avatar = QLabel(me['name'][0].upper())
-        avatar.setFixedSize(100, 100)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setStyleSheet(f"""
-            background-color: {role_colors[1]};
-            color: {role_colors[0]};
-            border-radius: 50px;
-            font-size: 40px;
-            font-weight: 700;
-        """)
-        header_layout.addWidget(avatar)
-        
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(8)
-        
-        name_label = QLabel(me['name'])
-        name_label.setStyleSheet(f"""
-            color: {COLORS['text_primary']};
-            font-size: 28px;
-            font-weight: 700;
-        """)
-        info_layout.addWidget(name_label)
-        
-        role_badge = QLabel(me.get('role', 'desconocido').capitalize())
-        role_badge.setStyleSheet(f"""
-            background-color: {role_colors[1]};
-            color: {role_colors[0]};
-            padding: 6px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-        """)
-        role_badge.setFixedWidth(role_badge.sizeHint().width() + 16)
-        info_layout.addWidget(role_badge)
-        
-        if me_data and me_data.get('profile_summary'):
-            summary = QLabel(me_data['profile_summary'])
-            summary.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 14px;")
-            summary.setWordWrap(True)
-            info_layout.addWidget(summary)
-            
-        header_layout.addLayout(info_layout, 1)
-        self.profile_layout.addWidget(header_card)
-        
-        # Stats row
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(16)
-        
-        stats_data = [
-            ("💬", "Mensajes", str(me_stats.get('total_messages', 0))),
-            ("📋", "Tareas", str(me_stats.get('total_tasks', 0))),
-            ("✅", "Completadas", str(me_stats.get('completed_tasks', 0))),
-            ("⭐", "Promedio Skills", f"{me_stats.get('avg_skill_score', 0):.0f}%"),
-        ]
-        
-        for icon, label, value in stats_data:
-            stat_card = QFrame()
-            stat_card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {COLORS['bg_secondary']};
-                    border: 1px solid {COLORS['border_light']};
-                    border-radius: 12px;
-                    padding: 16px;
-                }}
-            """)
-            stat_layout = QVBoxLayout(stat_card)
-            stat_layout.setSpacing(4)
-            
-            icon_label = QLabel(icon)
-            icon_label.setStyleSheet("font-size: 24px;")
-            stat_layout.addWidget(icon_label)
-            
-            value_label = QLabel(value)
-            value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 24px; font-weight: 700;")
-            stat_layout.addWidget(value_label)
-            
-            label_label = QLabel(label)
-            label_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
-            stat_layout.addWidget(label_label)
-            
-            stats_layout.addWidget(stat_card)
-            
-        stats_layout.addStretch()
-        self.profile_layout.addLayout(stats_layout)
-        
-        # Two column layout for skills and recommendations
-        columns_layout = QHBoxLayout()
-        columns_layout.setSpacing(24)
-        
-        # Skills card
-        if me_data and me_data.get('skills'):
-            skills_card = Card()
-            skills_layout = QVBoxLayout(skills_card)
-            skills_layout.setSpacing(16)
-            
-            skills_header = QLabel("📊 Mis Habilidades")
-            skills_header.setStyleSheet(f"""
-                color: {COLORS['text_primary']};
-                font-size: 18px;
-                font-weight: 600;
-            """)
-            skills_layout.addWidget(skills_header)
-            
-            for skill in me_data['skills']:
-                skill_bar = SkillBar(skill['name'], skill['score'], skill.get('category', ''))
-                skills_layout.addWidget(skill_bar)
-                
-            columns_layout.addWidget(skills_card, 1)
-            
-        # My tasks card
-        my_tasks = self.db.get_my_tasks()
-        if my_tasks:
-            tasks_card = Card()
-            tasks_layout = QVBoxLayout(tasks_card)
-            tasks_layout.setSpacing(16)
-            
-            tasks_header = QLabel("📋 Mis Tareas Pendientes")
-            tasks_header.setStyleSheet(f"""
-                color: {COLORS['text_primary']};
-                font-size: 18px;
-                font-weight: 600;
-            """)
-            tasks_layout.addWidget(tasks_header)
-            
-            pending_tasks = [t for t in my_tasks if t['status'] != 'completed'][:5]
-            for task in pending_tasks:
-                task_item = TaskCard(
-                    task['id'], task['title'], task.get('description', ''),
-                    task.get('status', 'pending'), task.get('priority', 'medium')
-                )
-                task_item.status_changed.connect(self._on_task_status_changed)
-                tasks_layout.addWidget(task_item)
-                
-            if not pending_tasks:
-                done_label = QLabel("🎉 ¡No tienes tareas pendientes!")
-                done_label.setStyleSheet(f"color: {COLORS['success']}; padding: 20px;")
-                done_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                tasks_layout.addWidget(done_label)
-                
-            columns_layout.addWidget(tasks_card, 1)
-            
-        self.profile_layout.addLayout(columns_layout)
-        self.profile_layout.addStretch()
+        # Cargar contenido de la pestaña actual
+        current_tab = self.profile_content_stack.currentIndex()
+        self._load_profile_tab_content(current_tab)
         
     def _load_persons(self):
         self._clear_layout(self.persons_grid)
