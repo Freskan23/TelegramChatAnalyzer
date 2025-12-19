@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.7.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -490,6 +490,12 @@ class Database:
         row = self.cursor.fetchone()
         return dict(row) if row else None
     
+    def get_person_by_name(self, name: str) -> Optional[Dict]:
+        """Obtiene una persona por su nombre"""
+        self.cursor.execute('SELECT * FROM persons WHERE name = ?', (name,))
+        row = self.cursor.fetchone()
+        return dict(row) if row else None
+    
     def get_all_persons(self, min_messages: int = 1) -> List[Dict]:
         self.cursor.execute(
             'SELECT * FROM persons WHERE total_messages >= ? ORDER BY total_messages DESC',
@@ -646,6 +652,27 @@ class Database:
         ''', (chat_id, person_id, content, timestamp))
         self.conn.commit()
         return self.cursor.lastrowid
+    
+    def get_messages_for_person(self, person_id: int) -> List[Dict]:
+        """Obtiene todos los mensajes de una persona"""
+        self.cursor.execute('''
+            SELECT m.*, p.name as sender_name
+            FROM messages m
+            JOIN persons p ON m.person_id = p.id
+            WHERE m.person_id = ?
+            ORDER BY m.timestamp ASC
+        ''', (person_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_all_messages(self) -> List[Dict]:
+        """Obtiene todos los mensajes con información del remitente"""
+        self.cursor.execute('''
+            SELECT m.*, p.name as sender_name
+            FROM messages m
+            JOIN persons p ON m.person_id = p.id
+            ORDER BY m.timestamp ASC
+        ''')
+        return [dict(row) for row in self.cursor.fetchall()]
         
     def add_pattern(self, name: str, pattern_type: str, description: str = None,
                     persons_involved: List[str] = None, examples: List[str] = None,
@@ -925,6 +952,7 @@ class TelegramHTMLParser:
         self.participants = {}
         self.chat_name = ""
         self.date_range = (None, None)
+        self.links = []  # Lista de enlaces encontrados
         
     def parse_file(self, file_path: str) -> Dict:
         if not os.path.exists(file_path):
@@ -936,6 +964,7 @@ class TelegramHTMLParser:
         soup = BeautifulSoup(content, 'html.parser')
         self._extract_chat_name(soup)
         self._extract_messages(soup)
+        self._extract_links()  # Extraer enlaces de los mensajes
         self._calculate_date_range()
         self._clean_participants()
         
@@ -944,7 +973,8 @@ class TelegramHTMLParser:
             'messages': self.messages,
             'participants': self.participants,
             'date_range': self.date_range,
-            'total_messages': len(self.messages)
+            'total_messages': len(self.messages),
+            'links': self.links  # Incluir enlaces
         }
     
     def _extract_chat_name(self, soup):
@@ -1051,6 +1081,53 @@ class TelegramHTMLParser:
                 
         for name in to_remove:
             del self.participants[name]
+    
+    def _extract_links(self):
+        """Extrae todos los enlaces de los mensajes"""
+        import re
+        url_pattern = re.compile(
+            r'https?://[^\s<>"{}|\\^`\[\]]+'
+        )
+        
+        link_counts = {}  # Para contar ocurrencias
+        
+        for msg in self.messages:
+            content = msg.get('content', '')
+            sender = msg.get('sender', '')
+            timestamp = msg.get('timestamp', '')
+            
+            # Buscar URLs en el contenido
+            urls = url_pattern.findall(content)
+            
+            for url in urls:
+                # Limpiar URL (quitar puntuación final)
+                url = url.rstrip('.,;:!?)"\'')
+                
+                if url not in link_counts:
+                    link_counts[url] = {
+                        'url': url,
+                        'shared_by': [],
+                        'contexts': [],
+                        'count': 0,
+                        'first_shared': timestamp,
+                        'last_shared': timestamp
+                    }
+                
+                link_counts[url]['count'] += 1
+                link_counts[url]['last_shared'] = timestamp
+                
+                if sender and sender not in link_counts[url]['shared_by']:
+                    link_counts[url]['shared_by'].append(sender)
+                
+                # Guardar contexto (el mensaje donde aparece)
+                if len(link_counts[url]['contexts']) < 3:  # Max 3 contextos
+                    link_counts[url]['contexts'].append({
+                        'message': content[:200],  # Primeros 200 chars
+                        'sender': sender,
+                        'timestamp': timestamp
+                    })
+        
+        self.links = list(link_counts.values())
 
 
 # ============================================================
@@ -4387,13 +4464,31 @@ class MainWindow(QMainWindow):
                 if sender and sender in data['participants']:
                     person_id = self.db.add_person(sender)
                     self.db.add_message(chat_id, person_id, msg.get('content', ''), msg.get('timestamp'))
+            
+            # Guardar enlaces encontrados
+            links_count = 0
+            for link_data in data.get('links', []):
+                shared_by_id = None
+                if link_data['shared_by']:
+                    person = self.db.get_person_by_name(link_data['shared_by'][0])
+                    if person:
+                        shared_by_id = person['id']
+                
+                self.db.add_link(
+                    url=link_data['url'],
+                    link_type='general',  # Se categorizará con IA después
+                    context=link_data['contexts'][0]['message'] if link_data['contexts'] else '',
+                    shared_by=shared_by_id,
+                    mention_count=link_data['count']
+                )
+                links_count += 1
                     
             self.loading_overlay.hide()
             self._load_data()
             
             reply = QMessageBox.question(
                 self, "Chat Importado",
-                f"Se importaron {data['total_messages']} mensajes de {len(data['participants'])} participantes.\n\n¿Deseas analizar con IA ahora?",
+                f"Se importaron {data['total_messages']} mensajes de {len(data['participants'])} participantes y {links_count} enlaces.\n\n¿Deseas analizar con IA ahora?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             
