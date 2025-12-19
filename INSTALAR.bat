@@ -1,23 +1,22 @@
 @echo off
-chcp 65001 >nul
 title Telegram Chat Analyzer - Instalador
 
 echo.
-echo ╔══════════════════════════════════════════════════════════╗
-echo ║     TELEGRAM CHAT ANALYZER - INSTALADOR                  ║
-echo ╚══════════════════════════════════════════════════════════╝
+echo ========================================================
+echo      TELEGRAM CHAT ANALYZER - INSTALADOR
+echo ========================================================
 echo.
 
 :: Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ Python no está instalado.
-    echo    Descárgalo de https://python.org
+    echo [ERROR] Python no esta instalado.
+    echo         Descargalo de https://python.org
     pause
     exit /b 1
 )
 
-echo ✅ Python encontrado
+echo [OK] Python encontrado
 echo.
 
 :: Create venv if not exists
@@ -33,17 +32,17 @@ echo [2/3] Instalando dependencias...
 call venv\Scripts\activate
 pip install -q -r requirements.txt
 
-echo [3/3] ¡Instalación completada!
+echo [3/3] Instalacion completada!
 echo.
-echo ══════════════════════════════════════════════════════════
+echo ========================================================
 echo.
-echo   Para ejecutar la aplicación:
+echo   Para ejecutar la aplicacion:
 echo   - Doble clic en EJECUTAR.bat
 echo.
 echo   O desde la terminal:
 echo   - venv\Scripts\activate
 echo   - python TelegramChatAnalyzer.py
 echo.
-echo ══════════════════════════════════════════════════════════
+echo ========================================================
 echo.
 pause
