@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.7"
+APP_VERSION = "3.1.8"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3991,6 +3991,58 @@ class MainWindow(QMainWindow):
             layout.addSpacing(16)
             
             # === LISTA DE ALERTAS ===
+            # === CONTROLES DE ANÁLISIS (siempre visibles) ===
+            controls_row = QHBoxLayout()
+            controls_row.setSpacing(12)
+            
+            person_label = QLabel("🔍 Analizar persona:")
+            person_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
+            controls_row.addWidget(person_label)
+            
+            self.alert_person_combo = QComboBox()
+            self.alert_person_combo.setStyleSheet(f"""
+                QComboBox {{
+                    background-color: white;
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    min-width: 200px;
+                }}
+            """)
+            self.alert_person_combo.addItem("-- Selecciona --", None)
+            persons = self.db.get_all_persons(min_messages=1)
+            for p in persons:
+                if p['name'] != me.get('name', ''):
+                    self.alert_person_combo.addItem(p['name'], p['id'])
+            controls_row.addWidget(self.alert_person_combo)
+            
+            self.analyze_selected_btn = QPushButton("🔍 Analizar")
+            self.analyze_selected_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3B82F6;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #2563EB; }
+            """)
+            self.analyze_selected_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.analyze_selected_btn.clicked.connect(self._analyze_selected_person)
+            controls_row.addWidget(self.analyze_selected_btn)
+            
+            self.alert_progress_label = QLabel("")
+            self.alert_progress_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            self.alert_progress_label.hide()
+            controls_row.addWidget(self.alert_progress_label)
+            
+            controls_row.addStretch()
+            layout.addLayout(controls_row)
+            layout.addSpacing(12)
+            
+            # === LISTA DE ALERTAS ===
             if all_alerts:
                 # Aplicar filtro por tipo
                 if current_filter != 'all':
@@ -4028,75 +4080,13 @@ class MainWindow(QMainWindow):
                 
                 scroll_layout.addStretch()
                 scroll.setWidget(scroll_content)
-                layout.addWidget(scroll, 1)  # stretch=1 para que ocupe espacio disponible
+                layout.addWidget(scroll, 1)
             else:
-                # Controles de análisis cuando no hay alertas
-                controls_card = QFrame()
-                controls_card.setStyleSheet(f"""
-                    QFrame {{
-                        background-color: {COLORS['bg_secondary']};
-                        border: 1px solid {COLORS['border']};
-                        border-radius: 12px;
-                    }}
-                """)
-                controls_layout = QVBoxLayout(controls_card)
-                controls_layout.setContentsMargins(16, 16, 16, 16)
-                controls_layout.setSpacing(12)
-                
-                person_row = QHBoxLayout()
-                person_label = QLabel("👤 Analizar a:")
-                person_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
-                person_row.addWidget(person_label)
-                
-                self.alert_person_combo = QComboBox()
-                self.alert_person_combo.setStyleSheet(f"""
-                    QComboBox {{
-                        background-color: white;
-                        border: 1px solid {COLORS['border']};
-                        border-radius: 8px;
-                        padding: 8px 12px;
-                        min-width: 200px;
-                    }}
-                """)
-                self.alert_person_combo.addItem("-- Selecciona una persona --", None)
-                persons = self.db.get_all_persons(min_messages=1)
-                for p in persons:
-                    if p['name'] != me.get('name', ''):
-                        self.alert_person_combo.addItem(p['name'], p['id'])
-                person_row.addWidget(self.alert_person_combo)
-                person_row.addStretch()
-                controls_layout.addLayout(person_row)
-                
-                btn_row = QHBoxLayout()
-                self.analyze_selected_btn = QPushButton("🔍 Analizar")
-                self.analyze_selected_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #3B82F6;
-                        color: white;
-                        border: none;
-                        padding: 10px 20px;
-                        border-radius: 8px;
-                        font-size: 13px;
-                        font-weight: 600;
-                    }
-                    QPushButton:hover { background-color: #2563EB; }
-                """)
-                self.analyze_selected_btn.clicked.connect(self._analyze_selected_person)
-                btn_row.addWidget(self.analyze_selected_btn)
-                
-                self.alert_progress_label = QLabel("")
-                self.alert_progress_label.hide()
-                btn_row.addWidget(self.alert_progress_label)
-                btn_row.addStretch()
-                controls_layout.addLayout(btn_row)
-                
-                layout.addWidget(controls_card)
-                layout.addSpacing(16)
-                
+                # Mensaje cuando no hay alertas
                 empty = EmptyState(
                     "✅",
                     "Sin alertas detectadas",
-                    "No se han detectado comportamientos problemáticos. Selecciona una persona y haz clic en 'Analizar'."
+                    "No se han detectado comportamientos problemáticos. Selecciona una persona arriba y haz clic en 'Analizar'."
                 )
                 layout.addWidget(empty)
             
@@ -4248,9 +4238,8 @@ class MainWindow(QMainWindow):
         title_lbl.setWordWrap(True)
         main_layout.addWidget(title_lbl)
         
-        # === FILA 3: Descripcion ===
-        desc_short = detalle[:180] + '...' if len(detalle) > 180 else detalle
-        desc_lbl = QLabel(desc_short)
+        # === FILA 3: Descripcion (completa, sin truncar) ===
+        desc_lbl = QLabel(detalle)
         desc_lbl.setStyleSheet("color: #4B5563; font-size: 13px; border: none; background: transparent;")
         desc_lbl.setWordWrap(True)
         main_layout.addWidget(desc_lbl)
