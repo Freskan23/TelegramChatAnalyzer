@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.8"
+APP_VERSION = "3.1.9"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -5352,8 +5352,13 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self, "Confirmar análisis con IA",
             f"Vas a analizar a {person['name']}:\n\n"
-            f"• {len(messages)} mensajes\n\n"
-            f"Esto consumirá créditos de tu API de IA.\n\n"
+            f"• {len(messages)} mensajes (TODOS)\n\n"
+            f"Se extraerán:\n"
+            f"• Patrones de comportamiento\n"
+            f"• Tareas y proyectos\n"
+            f"• Tipo de cliente\n"
+            f"• Alertas\n\n"
+            f"Esto puede tardar unos minutos y consumirá créditos de tu API.\n\n"
             f"¿Continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
@@ -5363,7 +5368,7 @@ class MainWindow(QMainWindow):
             return
         
         # Preparar datos para el análisis
-        self.loading_overlay.show_indeterminate(f"Analizando a {person['name']}...")
+        self.loading_overlay.show_indeterminate(f"Analizando {len(messages)} mensajes de {person['name']}...")
         self.loading_overlay.show()
         QApplication.processEvents()
         
@@ -5379,27 +5384,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Sin contenido", f"Los mensajes de {person['name']} no tienen contenido válido para analizar.")
             return
         
-        # Muestreo inteligente: tomar mensajes de diferentes períodos
-        # Para obtener una visión más representativa
+        # Usar TODOS los mensajes válidos para análisis completo
+        # Esto permite extraer patrones, tareas, proyectos, tipo de cliente y alertas
+        sampled_messages = valid_messages
         total_valid = len(valid_messages)
-        max_messages = 300  # Aumentado de 100 a 300
-        
-        if total_valid <= max_messages:
-            sampled_messages = valid_messages
-        else:
-            # Tomar mensajes distribuidos: inicio, medio y final
-            step = total_valid // max_messages
-            sampled_messages = []
-            # 40% más recientes (al final)
-            recent_count = int(max_messages * 0.4)
-            sampled_messages.extend(valid_messages[-recent_count:])
-            # 30% del medio
-            middle_count = int(max_messages * 0.3)
-            middle_start = total_valid // 3
-            sampled_messages.extend(valid_messages[middle_start:middle_start + middle_count])
-            # 30% más antiguos (al inicio)
-            old_count = max_messages - len(sampled_messages)
-            sampled_messages.extend(valid_messages[:old_count])
         
         # Construir texto de mensajes con protección extra
         messages_lines = []
