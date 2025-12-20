@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QAction, QPainter, QPen, QBrush
+from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QAction, QPainter, QPen, QBrush, QPixmap
 
 from bs4 import BeautifulSoup
 
@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -318,6 +318,7 @@ class Database:
                 ai_analyzed_at TIMESTAMP,
                 sentiment TEXT DEFAULT 'neutral',
                 sentiment_score REAL DEFAULT 0.0,
+                avatar_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -536,6 +537,14 @@ class Database:
             except:
                 pass
         
+        # Migración: añadir avatar_path si no existe
+        if 'avatar_path' not in existing_columns:
+            try:
+                self.cursor.execute('ALTER TABLE persons ADD COLUMN avatar_path TEXT')
+                self.conn.commit()
+            except:
+                pass
+        
     def add_chat(self, name: str, chat_type: str = 'group', file_path: str = None) -> int:
         self.cursor.execute(
             'INSERT INTO chats (name, type, file_path) VALUES (?, ?, ?)',
@@ -589,7 +598,7 @@ class Database:
         self.conn.commit()
     
     def update_person(self, person_id: int, **kwargs):
-        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me', 'ai_analyzed', 'ai_analyzed_at', 'sentiment', 'sentiment_score']
+        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me', 'ai_analyzed', 'ai_analyzed_at', 'sentiment', 'sentiment_score', 'avatar_path']
         updates = []
         values = []
         for key, value in kwargs.items():
@@ -603,6 +612,22 @@ class Database:
                 values
             )
             self.conn.commit()
+    
+    def delete_person(self, person_id: int):
+        """Elimina una persona y todos sus datos asociados"""
+        # Eliminar mensajes de la persona
+        self.cursor.execute('DELETE FROM messages WHERE person_id = ?', (person_id,))
+        # Eliminar skills asociados
+        self.cursor.execute('DELETE FROM person_skills WHERE person_id = ?', (person_id,))
+        # Eliminar alertas de comportamiento
+        self.cursor.execute('DELETE FROM behavior_alerts WHERE person_id = ?', (person_id,))
+        # Eliminar compromisos
+        self.cursor.execute('DELETE FROM commitments WHERE person_id = ?', (person_id,))
+        # Eliminar tareas asignadas (poner assigned_to en NULL)
+        self.cursor.execute('UPDATE tasks SET assigned_to = NULL WHERE assigned_to = ?', (person_id,))
+        # Eliminar la persona
+        self.cursor.execute('DELETE FROM persons WHERE id = ?', (person_id,))
+        self.conn.commit()
             
     def get_person_with_skills(self, person_id: int) -> Optional[Dict]:
         person = self.get_person(person_id)
@@ -1748,20 +1773,61 @@ class StatCard(QFrame):
 
 class PersonCard(Card):
     analyze_clicked = pyqtSignal(int)  # Señal para solicitar análisis de persona
+    edit_clicked = pyqtSignal(int, str)  # person_id, nombre actual
+    delete_clicked = pyqtSignal(int, str)  # person_id, nombre
+    avatar_clicked = pyqtSignal(int)  # person_id para cambiar avatar
     
     def __init__(self, person_id: int, name: str, role: str, skills: list = None,
                  message_count: int = 0, is_me: bool = False, ai_analyzed: bool = False,
-                 sentiment: str = 'neutral', sentiment_score: float = 0.0, parent=None):
+                 sentiment: str = 'neutral', sentiment_score: float = 0.0, 
+                 avatar_path: str = None, parent=None):
         super().__init__(parent)
         self.person_id = person_id
         self.name = name
         self.ai_analyzed = ai_analyzed
         self.sentiment = sentiment
         self.sentiment_score = sentiment_score
-        self._setup_ui(name, role, skills, message_count, is_me, ai_analyzed, sentiment, sentiment_score)
+        self.avatar_path = avatar_path
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+        self._setup_ui(name, role, skills, message_count, is_me, ai_analyzed, sentiment, sentiment_score, avatar_path)
+    
+    def _show_context_menu(self, pos):
+        """Muestra menú contextual con opciones de edición"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #F1F5F9;
+            }
+        """)
+        
+        edit_action = menu.addAction("✏️ Editar nombre")
+        avatar_action = menu.addAction("🖼️ Cambiar foto")
+        menu.addSeparator()
+        delete_action = menu.addAction("🗑️ Eliminar persona")
+        delete_action.setStyleSheet("color: #EF4444;")
+        
+        action = menu.exec(self.mapToGlobal(pos))
+        
+        if action == edit_action:
+            self.edit_clicked.emit(self.person_id, self.name)
+        elif action == avatar_action:
+            self.avatar_clicked.emit(self.person_id)
+        elif action == delete_action:
+            self.delete_clicked.emit(self.person_id, self.name)
         
     def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool, ai_analyzed: bool,
-                   sentiment: str = 'neutral', sentiment_score: float = 0.0):
+                   sentiment: str = 'neutral', sentiment_score: float = 0.0, avatar_path: str = None):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -1770,18 +1836,38 @@ class PersonCard(Card):
         header = QHBoxLayout()
         header.setSpacing(12)
         
-        # Avatar (más pequeño)
+        # Avatar (más pequeño) - con soporte para imagen personalizada
         role_colors = ROLE_COLORS.get(role.lower(), ROLE_COLORS['desconocido'])
-        avatar = QLabel(name[0].upper() if name else "?")
+        avatar = QLabel()
         avatar.setFixedSize(48, 48)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setStyleSheet(f"""
-            background-color: {role_colors[1]};
-            color: {role_colors[0]};
-            border-radius: 24px;
-            font-size: 20px;
-            font-weight: 700;
-        """)
+        
+        if avatar_path and os.path.exists(avatar_path):
+            # Cargar imagen personalizada
+            pixmap = QPixmap(avatar_path)
+            pixmap = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            # Crear máscara circular
+            mask = QPixmap(48, 48)
+            mask.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(mask)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(Qt.GlobalColor.white)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(0, 0, 48, 48)
+            painter.end()
+            pixmap.setMask(mask.mask())
+            avatar.setPixmap(pixmap)
+            avatar.setStyleSheet("border-radius: 24px;")
+        else:
+            # Avatar con inicial
+            avatar.setText(name[0].upper() if name else "?")
+            avatar.setStyleSheet(f"""
+                background-color: {role_colors[1]};
+                color: {role_colors[0]};
+                border-radius: 24px;
+                font-size: 20px;
+                font-weight: 700;
+            """)
         header.addWidget(avatar)
         
         # Info container
@@ -2412,6 +2498,7 @@ class BehaviorAnalysisWorker(QThread):
         try:
             # Crear conexión a BD en este thread
             db = Database(self.db_path)
+            db.connect()
             analyzer = AIAnalyzer(api_key=self.api_key)
             
             total_alerts = 0
@@ -5118,14 +5205,20 @@ class MainWindow(QMainWindow):
             sentiment = person.get('sentiment', 'neutral')
             sentiment_score = float(person.get('sentiment_score', 0.0) or 0.0)
             
+            avatar_path = person.get('avatar_path')
+            
             card = PersonCard(
                 person['id'], person['name'], person.get('role', 'desconocido'),
                 skills=skills, message_count=person.get('total_messages', 0),
                 is_me=is_me, ai_analyzed=ai_analyzed,
-                sentiment=sentiment, sentiment_score=sentiment_score
+                sentiment=sentiment, sentiment_score=sentiment_score,
+                avatar_path=avatar_path
             )
             card.clicked.connect(lambda p=person: self._show_person_detail(p))
             card.analyze_clicked.connect(self._analyze_person_from_card)
+            card.edit_clicked.connect(self._edit_person_name)
+            card.delete_clicked.connect(self._delete_person)
+            card.avatar_clicked.connect(self._change_person_avatar)
             self.persons_grid.addWidget(card, row, col)
             
             col += 1
@@ -5244,6 +5337,65 @@ class MainWindow(QMainWindow):
         """Callback cuando hay error en el análisis"""
         self.loading_overlay.hide()
         QMessageBox.critical(self, "Error de análisis", f"Error al analizar:\n{error_msg}")
+    
+    def _edit_person_name(self, person_id: int, current_name: str):
+        """Edita el nombre de una persona"""
+        from PyQt6.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(
+            self, "Editar nombre", 
+            "Nuevo nombre:", 
+            text=current_name
+        )
+        if ok and new_name and new_name != current_name:
+            self.db.update_person(person_id, name=new_name)
+            self._load_data()
+            QMessageBox.information(self, "✅ Actualizado", f"Nombre cambiado a: {new_name}")
+    
+    def _delete_person(self, person_id: int, name: str):
+        """Elimina una persona y todos sus datos asociados"""
+        reply = QMessageBox.question(
+            self, "Confirmar eliminación",
+            f"¿Estás seguro de eliminar a '{name}'?\n\n"
+            "Se eliminarán también:\n"
+            "• Todos sus mensajes\n"
+            "• Skills asociados\n"
+            "• Alertas de comportamiento\n"
+            "• Compromisos\n\n"
+            "Esta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.db.delete_person(person_id)
+            self._load_data()
+            QMessageBox.information(self, "✅ Eliminado", f"'{name}' ha sido eliminado.")
+    
+    def _change_person_avatar(self, person_id: int):
+        """Cambia el avatar de una persona"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar imagen",
+            "",
+            "Imágenes (*.png *.jpg *.jpeg *.gif *.bmp)"
+        )
+        
+        if file_path:
+            # Crear directorio de avatares si no existe
+            avatars_dir = os.path.join(os.path.dirname(self.db.db_path), 'avatars')
+            os.makedirs(avatars_dir, exist_ok=True)
+            
+            # Copiar imagen al directorio de avatares
+            ext = os.path.splitext(file_path)[1]
+            avatar_filename = f"avatar_{person_id}{ext}"
+            avatar_path = os.path.join(avatars_dir, avatar_filename)
+            
+            import shutil
+            shutil.copy2(file_path, avatar_path)
+            
+            # Guardar ruta en BD
+            self.db.update_person(person_id, avatar_path=avatar_path)
+            self._load_data()
+            QMessageBox.information(self, "✅ Avatar actualizado", "La foto de perfil ha sido actualizada.")
                 
     def _load_tasks(self, status_filter: str = None):
         self._clear_layout(self.tasks_list)
