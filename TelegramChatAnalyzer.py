@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -1610,8 +1610,10 @@ IMPORTANTE: Solo incluye alertas con confidence >= 0.6. Mejor pocos alertas cert
         lines = []
         for msg in messages:
             timestamp = msg.get('timestamp', '')[:16] if msg.get('timestamp') else ''
-            sender = msg.get('sender', 'Desconocido')
-            content = msg.get('content', '')
+            sender = msg.get('sender', 'Desconocido') or 'Desconocido'
+            content = msg.get('content', '') or ''  # Manejar None
+            if not content:  # Saltar mensajes vacíos
+                continue
             if include_sender:
                 lines.append(f"[{timestamp}] {sender}: {content}")
             else:
@@ -5271,8 +5273,13 @@ class MainWindow(QMainWindow):
         self.loading_overlay.show()
         QApplication.processEvents()
         
-        # Crear thread de análisis para esta persona
-        messages_text = "\n".join([f"{person['name']}: {m['content']}" for m in messages if m.get('content')])
+        # Crear thread de análisis para esta persona - filtrar mensajes vacíos
+        valid_messages = [m for m in messages if m.get('content') and str(m.get('content', '')).strip()]
+        if not valid_messages:
+            self.loading_overlay.hide()
+            QMessageBox.warning(self, "Sin contenido", f"Los mensajes de {person['name']} no tienen contenido válido para analizar.")
+            return
+        messages_text = "\n".join([f"{person['name']}: {str(m['content'])}" for m in valid_messages])
         
         self.person_analysis_thread = PersonAnalysisThread(
             api_key, person_id, person['name'], messages_text, self.db
