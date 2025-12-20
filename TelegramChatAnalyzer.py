@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.0.5"
+APP_VERSION = "3.0.6"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2561,34 +2561,38 @@ class PersonAnalysisThread(QThread):
         try:
             analyzer = AIAnalyzer(api_key=self.api_key)
             
-            # Analizar rol y skills
+            # Analizar rol, skills, sentimiento y compromisos
             prompt = f"""Analiza los siguientes mensajes de {self.person_name} y extrae:
 
 1. ROL: ¿Qué rol tiene esta persona? (profesor, alumno, colaborador, cliente, manager, desconocido)
-2. SKILLS: Lista de habilidades detectadas con nivel estimado (1-100)
-3. PATRONES: Patrones de comportamiento observados
+2. SKILLS: Lista de habilidades detectadas con nivel estimado (1-100) y categoría
+3. SENTIMIENTO: Tono general de la comunicación (positive, neutral, negative) y score (-1.0 a 1.0)
+4. COMPROMISOS: Promesas, acuerdos o fechas límite mencionadas
 
 Mensajes:
-{self.messages_text[:8000]}
+{self.messages_text[:12000]}
 
-Responde en JSON con este formato:
+Responde SOLO con JSON válido en este formato:
 {{
-    "role": "rol_detectado",
+    "role": "colaborador",
     "role_confidence": 0.8,
+    "sentiment": "positive",
+    "sentiment_score": 0.6,
     "skills": [
-        {{"name": "skill1", "level": 70}},
-        {{"name": "skill2", "level": 50}}
+        {{"name": "Diseño Web", "level": 85, "category": "técnica"}},
+        {{"name": "Comunicación", "level": 70, "category": "comunicación"}}
     ],
-    "patterns": [
-        {{
-            "type": "comunicacion",
-            "description": "Descripción del patrón",
-            "frequency": "frequent",
-            "examples": ["ejemplo1", "ejemplo2"]
-        }}
+    "commitments": [
+        {{"title": "Entregar propuesta", "type": "promise", "due_date": "2024-01-15", "evidence": "Te lo envío mañana"}},
+        {{"title": "Reunión de seguimiento", "type": "agreement", "due_date": null, "evidence": "Quedamos en vernos la próxima semana"}}
     ],
-    "summary": "Resumen breve de la persona"
-}}"""
+    "summary": "Resumen profesional en 2-3 oraciones"
+}}
+
+IMPORTANTE:
+- Busca TODOS los compromisos, promesas, acuerdos y fechas límite mencionados
+- Si no hay compromisos claros, devuelve un array vacío
+- El sentimiento debe reflejar el tono general de la persona"""
             
             result = analyzer._call_ai(prompt)
             
@@ -5299,12 +5303,38 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Sin contenido", f"Los mensajes de {person['name']} no tienen contenido válido para analizar.")
             return
         
+        # Muestreo inteligente: tomar mensajes de diferentes períodos
+        # Para obtener una visión más representativa
+        total_valid = len(valid_messages)
+        max_messages = 300  # Aumentado de 100 a 300
+        
+        if total_valid <= max_messages:
+            sampled_messages = valid_messages
+        else:
+            # Tomar mensajes distribuidos: inicio, medio y final
+            step = total_valid // max_messages
+            sampled_messages = []
+            # 40% más recientes (al final)
+            recent_count = int(max_messages * 0.4)
+            sampled_messages.extend(valid_messages[-recent_count:])
+            # 30% del medio
+            middle_count = int(max_messages * 0.3)
+            middle_start = total_valid // 3
+            sampled_messages.extend(valid_messages[middle_start:middle_start + middle_count])
+            # 30% más antiguos (al inicio)
+            old_count = max_messages - len(sampled_messages)
+            sampled_messages.extend(valid_messages[:old_count])
+        
         # Construir texto de mensajes con protección extra
         messages_lines = []
-        for m in valid_messages[:100]:  # Limitar a 100 mensajes
+        for m in sampled_messages:
             content = str(m.get('content', '') or '').strip()
+            timestamp = m.get('timestamp', '')[:10] if m.get('timestamp') else ''
             if content:
-                messages_lines.append(f"{person['name']}: {content}")
+                if timestamp:
+                    messages_lines.append(f"[{timestamp}] {person['name']}: {content}")
+                else:
+                    messages_lines.append(f"{person['name']}: {content}")
         
         if not messages_lines:
             self.loading_overlay.hide()
