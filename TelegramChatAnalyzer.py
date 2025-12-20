@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.9.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3639,7 +3639,7 @@ class MainWindow(QMainWindow):
         self._load_profile_tab_content(7)  # Recargar pestaña de alertas
     
     def _analyze_selected_person(self):
-        """Analiza comportamientos de la persona seleccionada o todas en segundo plano"""
+        """Analiza comportamientos de la persona seleccionada (requiere selección individual)"""
         api_key = self.db.get_setting('api_key')
         if not api_key:
             QMessageBox.warning(self, "API Key requerida", 
@@ -3652,19 +3652,44 @@ class MainWindow(QMainWindow):
                 "Selecciona tu usuario en el selector de 'Mi Perfil' primero.")
             return
         
-        # Obtener persona seleccionada
+        # Obtener persona seleccionada - REQUIERE selección individual
         selected_person_id = self.alert_person_combo.currentData()
         
-        if selected_person_id:
-            persons_to_analyze = [self.db.get_person(selected_person_id)]
-            target_name = self.alert_person_combo.currentText()
-        else:
-            persons_to_analyze = [p for p in self.db.get_all_persons(min_messages=5) if p['id'] != me['id']]
-            target_name = "todas las personas"
-        
-        if not persons_to_analyze:
-            QMessageBox.information(self, "Sin datos", "No hay personas para analizar.")
+        if not selected_person_id:
+            QMessageBox.warning(self, "Selecciona una persona",
+                "Debes seleccionar una persona específica para analizar.\n\n"
+                "Analizar a todas las personas consumiría muchos créditos de IA.\n"
+                "Selecciona una persona del desplegable.")
             return
+        
+        person = self.db.get_person(selected_person_id)
+        if not person:
+            QMessageBox.warning(self, "Error", "No se encontró la persona seleccionada.")
+            return
+        
+        # Contar mensajes para mostrar confirmación
+        messages = self.db.get_messages_for_person(person['id'])
+        msg_count = len(messages)
+        
+        if msg_count < 5:
+            QMessageBox.information(self, "Pocos mensajes",
+                f"{person['name']} solo tiene {msg_count} mensajes.\n"
+                "Se necesitan al menos 5 mensajes para analizar comportamientos.")
+            return
+        
+        # Confirmación antes de analizar
+        reply = QMessageBox.question(self, "Confirmar análisis con IA",
+            f"Vas a analizar {msg_count} mensajes de {person['name']}.\n\n"
+            f"Esto consumirá créditos de tu API de IA.\n\n"
+            f"¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        persons_to_analyze = [person]
+        target_name = person['name']
         
         # Deshabilitar botón y mostrar progreso
         self.analyze_selected_btn.setEnabled(False)
@@ -4601,14 +4626,18 @@ class MainWindow(QMainWindow):
             self.loading_overlay.hide()
             self._load_data()
             
-            reply = QMessageBox.question(
+            # Informar sin sugerir análisis automático (para ahorrar créditos)
+            QMessageBox.information(
                 self, "Chat Importado",
-                f"Se importaron {data['total_messages']} mensajes de {len(data['participants'])} participantes y {links_count} enlaces.\n\n¿Deseas analizar con IA ahora?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                f"Se importaron:\n\n"
+                f"• {data['total_messages']} mensajes\n"
+                f"• {len(data['participants'])} participantes\n"
+                f"• {links_count} enlaces\n\n"
+                f"Para analizar con IA, ve a:\n"
+                f"• Menú Archivo > Analizar con IA (Ctrl+A)\n"
+                f"• Mi Perfil > Alertas > Analizar persona\n\n"
+                f"El análisis con IA consume créditos, úsalo solo cuando lo necesites."
             )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                self._run_ai_analysis()
                 
         except Exception as e:
             self.loading_overlay.hide()
@@ -4627,6 +4656,23 @@ class MainWindow(QMainWindow):
                 "Configura tu API key en la sección de Configuración para usar el análisis con IA."
             )
             self._navigate_to(5)
+            return
+        
+        # Contar mensajes y participantes para confirmación
+        msg_count = len(self.current_chat_data.get('messages', []))
+        participants_count = len(self.current_chat_data.get('participants', []))
+        
+        # Confirmación antes de analizar
+        reply = QMessageBox.question(self, "Confirmar análisis con IA",
+            f"Vas a analizar:\n\n"
+            f"• {msg_count} mensajes\n"
+            f"• {participants_count} participantes\n\n"
+            f"Esto consumirá créditos de tu API de IA.\n\n"
+            f"¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        
+        if reply != QMessageBox.StandardButton.Yes:
             return
             
         me = self.db.get_me()
