@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.4"
+APP_VERSION = "3.1.5"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -4129,134 +4129,146 @@ class MainWindow(QMainWindow):
         self._load_profile_tab_content(7)
     
     def _create_alert_card(self, alert: dict) -> QFrame:
-        """Crea una tarjeta de alerta - diseño vertical simple y robusto"""
-        card = QFrame()
-        card.setObjectName("alertCard")
+        """Genera widget de alerta usando QWidget puro sin stylesheets complejos"""
+        # Crear contenedor principal
+        container = QFrame()
+        container.setMinimumHeight(120)
+        container.setMaximumHeight(200)
         
-        # Extraer datos con debug
-        alert_id = alert.get('id', 0)
-        alert_type = str(alert.get('alert_type') or 'red_flags')
-        severity = str(alert.get('severity') or 'medium').lower()
-        person_name = str(alert.get('person_name') or 'Desconocido')
+        # Obtener datos de la alerta
+        aid = alert.get('id', 0)
+        atype = alert.get('alert_type', 'red_flags') or 'red_flags'
+        sev = (alert.get('severity', 'medium') or 'medium').lower()
+        quien = alert.get('person_name', 'Usuario') or 'Usuario'
+        titulo = alert.get('title', '') or ''
+        detalle = alert.get('description', '') or ''
+        pid = alert.get('person_id')
         
-        # Títulos por tipo
-        type_titles = {
-            'inconsistency': 'Contradicción detectada',
-            'knowledge_abuse': 'Abuso de conocimiento',
-            'emotional_manipulation': 'Manipulación emocional',
-            'possible_lies': 'Posible información falsa',
-            'red_flags': 'Señal de alerta'
-        }
-        title_text = str(alert.get('title') or '') or type_titles.get(alert_type, 'Alerta detectada')
-        desc_text = str(alert.get('description') or '') or "Se ha detectado un patrón que requiere revisión."
-        
-        # Configuración de severidad
-        severity_config = {
-            'high': {'bg': '#FEF2F2', 'border': '#DC2626', 'badge_bg': '#DC2626', 'label': '❗ ALTA'},
-            'medium': {'bg': '#FFF7ED', 'border': '#F97316', 'badge_bg': '#F97316', 'label': '⚠️ MEDIA'},
-            'low': {'bg': '#FEFCE8', 'border': '#EAB308', 'badge_bg': '#EAB308', 'label': '❓ BAJA'}
-        }
-        config = severity_config.get(severity, severity_config['medium'])
-        
-        # Estilo de tarjeta
-        card.setStyleSheet(f"""
-            QFrame#alertCard {{
-                background-color: {config['bg']};
-                border: 1px solid {config['border']};
-                border-left: 5px solid {config['border']};
-                border-radius: 8px;
-                margin: 4px 0px;
-            }}
-            QFrame#alertCard QLabel {{
-                background-color: transparent;
-            }}
-        """)
-        
-        # Layout vertical principal
-        main_layout = QVBoxLayout(card)
-        main_layout.setContentsMargins(16, 12, 16, 12)
-        main_layout.setSpacing(8)
-        
-        # === FILA 1: Badge + Usuario ===
-        row1 = QHBoxLayout()
-        
-        # Badge de severidad
-        severity_badge = QLabel(config['label'])
-        severity_badge.setStyleSheet(f"""
-            QLabel {{
-                background-color: {config['badge_bg']};
-                color: white;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 4px 10px;
-                border-radius: 4px;
-            }}
-        """)
-        row1.addWidget(severity_badge)
-        row1.addStretch()
-        
-        # Usuario
-        user_label = QLabel(f"👤 {person_name}")
-        user_label.setStyleSheet("color: #64748B; font-size: 12px;")
-        row1.addWidget(user_label)
-        
-        main_layout.addLayout(row1)
-        
-        # === FILA 2: Título ===
-        title_label = QLabel(title_text)
-        title_label.setStyleSheet("color: #1E293B; font-size: 15px; font-weight: bold;")
-        title_label.setWordWrap(True)
-        main_layout.addWidget(title_label)
-        
-        # === FILA 3: Descripción ===
-        short_desc = desc_text[:150] + '...' if len(desc_text) > 150 else desc_text
-        desc_label = QLabel(short_desc)
-        desc_label.setStyleSheet("color: #475569; font-size: 13px;")
-        desc_label.setWordWrap(True)
-        main_layout.addWidget(desc_label)
-        
-        # === FILA 4: Botones ===
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        
-        person_id = alert.get('person_id')
-        if person_id:
-            view_btn = QPushButton("💬 Abrir chat")
-            view_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: white;
-                    color: #1E293B;
-                    border: 1px solid #E2E8F0;
-                    padding: 8px 14px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                }
-                QPushButton:hover { background-color: #F1F5F9; }
-            """)
-            view_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            view_btn.clicked.connect(lambda checked, pid=person_id: self._view_person_chat(pid))
-            btn_row.addWidget(view_btn)
-        
-        review_btn = QPushButton("✓ Marcar como revisada")
-        review_btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                color: #1E293B;
-                border: 1px solid #E2E8F0;
-                padding: 8px 14px;
-                border-radius: 6px;
-                font-size: 12px;
+        # Si no hay titulo, usar uno generico segun tipo
+        if not titulo:
+            titulos_default = {
+                'inconsistency': 'Se detectaron inconsistencias',
+                'knowledge_abuse': 'Posible aprovechamiento',
+                'emotional_manipulation': 'Patron de manipulacion',
+                'possible_lies': 'Informacion dudosa',
+                'red_flags': 'Comportamiento inusual'
             }
-            QPushButton:hover { background-color: #F1F5F9; }
-        """)
-        review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        review_btn.clicked.connect(lambda checked, aid=alert_id: self._dismiss_alert(aid))
-        btn_row.addWidget(review_btn)
+            titulo = titulos_default.get(atype, 'Alerta de comportamiento')
         
-        btn_row.addStretch()
-        main_layout.addLayout(btn_row)
+        if not detalle:
+            detalle = 'Se ha identificado un patron que podria requerir tu atencion.'
         
-        return card
+        # Colores segun severidad
+        if sev == 'high':
+            color_fondo = '#FFEBEE'
+            color_borde = '#E53935'
+            texto_badge = 'ALTA'
+        elif sev == 'low':
+            color_fondo = '#FFFDE7'
+            color_borde = '#FBC02D'
+            texto_badge = 'BAJA'
+        else:
+            color_fondo = '#FFF3E0'
+            color_borde = '#FB8C00'
+            texto_badge = 'MEDIA'
+        
+        # Aplicar fondo y borde al contenedor
+        container.setAutoFillBackground(True)
+        pal = container.palette()
+        pal.setColor(container.backgroundRole(), QColor(color_fondo))
+        container.setPalette(pal)
+        container.setFrameShape(QFrame.Shape.Box)
+        container.setLineWidth(1)
+        container.setStyleSheet(f"border-left: 4px solid {color_borde}; border-radius: 6px;")
+        
+        # Layout principal vertical
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(12, 10, 12, 10)
+        vbox.setSpacing(6)
+        
+        # -- Linea superior: badge y nombre --
+        linea_sup = QWidget()
+        hbox_sup = QHBoxLayout(linea_sup)
+        hbox_sup.setContentsMargins(0, 0, 0, 0)
+        hbox_sup.setSpacing(10)
+        
+        # Badge severidad
+        lbl_badge = QLabel(texto_badge)
+        lbl_badge.setFixedHeight(22)
+        font_badge = lbl_badge.font()
+        font_badge.setBold(True)
+        font_badge.setPointSize(9)
+        lbl_badge.setFont(font_badge)
+        lbl_badge.setAutoFillBackground(True)
+        pal_badge = lbl_badge.palette()
+        pal_badge.setColor(lbl_badge.backgroundRole(), QColor(color_borde))
+        pal_badge.setColor(lbl_badge.foregroundRole(), QColor('white'))
+        lbl_badge.setPalette(pal_badge)
+        lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_badge.setFixedWidth(60)
+        hbox_sup.addWidget(lbl_badge)
+        
+        hbox_sup.addStretch()
+        
+        # Nombre persona
+        lbl_quien = QLabel(quien)
+        font_quien = lbl_quien.font()
+        font_quien.setPointSize(10)
+        lbl_quien.setFont(font_quien)
+        pal_quien = lbl_quien.palette()
+        pal_quien.setColor(lbl_quien.foregroundRole(), QColor('#555555'))
+        lbl_quien.setPalette(pal_quien)
+        hbox_sup.addWidget(lbl_quien)
+        
+        vbox.addWidget(linea_sup)
+        
+        # -- Titulo --
+        lbl_titulo = QLabel(titulo)
+        font_titulo = lbl_titulo.font()
+        font_titulo.setBold(True)
+        font_titulo.setPointSize(11)
+        lbl_titulo.setFont(font_titulo)
+        lbl_titulo.setWordWrap(True)
+        pal_titulo = lbl_titulo.palette()
+        pal_titulo.setColor(lbl_titulo.foregroundRole(), QColor('#212121'))
+        lbl_titulo.setPalette(pal_titulo)
+        vbox.addWidget(lbl_titulo)
+        
+        # -- Descripcion --
+        texto_corto = detalle if len(detalle) <= 120 else detalle[:120] + '...'
+        lbl_desc = QLabel(texto_corto)
+        font_desc = lbl_desc.font()
+        font_desc.setPointSize(10)
+        lbl_desc.setFont(font_desc)
+        lbl_desc.setWordWrap(True)
+        pal_desc = lbl_desc.palette()
+        pal_desc.setColor(lbl_desc.foregroundRole(), QColor('#424242'))
+        lbl_desc.setPalette(pal_desc)
+        vbox.addWidget(lbl_desc)
+        
+        # -- Botones --
+        linea_btns = QWidget()
+        hbox_btns = QHBoxLayout(linea_btns)
+        hbox_btns.setContentsMargins(0, 4, 0, 0)
+        hbox_btns.setSpacing(8)
+        
+        if pid:
+            btn_ver = QPushButton('Ver chat')
+            btn_ver.setFixedHeight(28)
+            btn_ver.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_ver.clicked.connect(lambda: self._view_person_chat(pid))
+            hbox_btns.addWidget(btn_ver)
+        
+        btn_ok = QPushButton('Marcar revisada')
+        btn_ok.setFixedHeight(28)
+        btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_ok.clicked.connect(lambda: self._dismiss_alert(aid))
+        hbox_btns.addWidget(btn_ok)
+        
+        hbox_btns.addStretch()
+        vbox.addWidget(linea_btns)
+        
+        return container
     
     def _get_alert_type_tooltip(self, alert_type: str) -> str:
         """Devuelve tooltip explicativo para cada tipo de alerta"""
