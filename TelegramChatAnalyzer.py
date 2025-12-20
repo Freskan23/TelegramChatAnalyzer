@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.9"
+APP_VERSION = "3.0.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -316,6 +316,8 @@ class Database:
                 is_me INTEGER DEFAULT 0,
                 ai_analyzed INTEGER DEFAULT 0,
                 ai_analyzed_at TIMESTAMP,
+                sentiment TEXT DEFAULT 'neutral',
+                sentiment_score REAL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -461,6 +463,36 @@ class Database:
             )
         ''')
         
+        # Tabla de compromisos/promesas detectados
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS commitments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                commitment_type TEXT DEFAULT 'promise',
+                title TEXT NOT NULL,
+                description TEXT,
+                due_date TEXT,
+                status TEXT DEFAULT 'pending',
+                evidence TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (person_id) REFERENCES persons(id)
+            )
+        ''')
+        
+        # Tabla de resumen de conversaciones
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conversation_summary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                summary_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                main_topics TEXT,
+                key_decisions TEXT,
+                action_items TEXT,
+                participants_involved TEXT,
+                FOREIGN KEY (chat_id) REFERENCES chats(id)
+            )
+        ''')
+        
         self.conn.commit()
         
         # Migraciones automáticas para bases de datos existentes
@@ -484,6 +516,22 @@ class Database:
         if 'ai_analyzed_at' not in existing_columns:
             try:
                 self.cursor.execute('ALTER TABLE persons ADD COLUMN ai_analyzed_at TIMESTAMP')
+                self.conn.commit()
+            except:
+                pass
+        
+        # Migración: añadir sentiment si no existe
+        if 'sentiment' not in existing_columns:
+            try:
+                self.cursor.execute("ALTER TABLE persons ADD COLUMN sentiment TEXT DEFAULT 'neutral'")
+                self.conn.commit()
+            except:
+                pass
+        
+        # Migración: añadir sentiment_score si no existe
+        if 'sentiment_score' not in existing_columns:
+            try:
+                self.cursor.execute('ALTER TABLE persons ADD COLUMN sentiment_score REAL DEFAULT 0.0')
                 self.conn.commit()
             except:
                 pass
@@ -541,7 +589,7 @@ class Database:
         self.conn.commit()
     
     def update_person(self, person_id: int, **kwargs):
-        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me', 'ai_analyzed', 'ai_analyzed_at']
+        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me', 'ai_analyzed', 'ai_analyzed_at', 'sentiment', 'sentiment_score']
         updates = []
         values = []
         for key, value in kwargs.items():
@@ -838,6 +886,66 @@ class Database:
             ORDER BY mention_count DESC, last_seen DESC
         ''', (person_id,))
         return [dict(row) for row in self.cursor.fetchall()]
+    
+    # === FUNCIONES DE COMPROMISOS ===
+    def add_commitment(self, person_id: int, title: str, commitment_type: str = 'promise',
+                       description: str = None, due_date: str = None, evidence: str = None) -> int:
+        self.cursor.execute('''
+            INSERT INTO commitments (person_id, commitment_type, title, description, due_date, evidence)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (person_id, commitment_type, title, description, due_date, evidence))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_all_commitments(self, status: str = None) -> List[Dict]:
+        if status:
+            self.cursor.execute('''
+                SELECT c.*, p.name as person_name
+                FROM commitments c
+                JOIN persons p ON c.person_id = p.id
+                WHERE c.status = ?
+                ORDER BY c.created_at DESC
+            ''', (status,))
+        else:
+            self.cursor.execute('''
+                SELECT c.*, p.name as person_name
+                FROM commitments c
+                JOIN persons p ON c.person_id = p.id
+                ORDER BY c.created_at DESC
+            ''')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_commitments_by_person(self, person_id: int) -> List[Dict]:
+        self.cursor.execute('''
+            SELECT * FROM commitments WHERE person_id = ?
+            ORDER BY created_at DESC
+        ''', (person_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def update_commitment_status(self, commitment_id: int, status: str):
+        self.cursor.execute('UPDATE commitments SET status = ? WHERE id = ?', (status, commitment_id))
+        self.conn.commit()
+    
+    # === FUNCIONES DE RESUMEN DE CONVERSACIONES ===
+    def add_conversation_summary(self, chat_id: int, main_topics: str, key_decisions: str = None,
+                                  action_items: str = None, participants: str = None) -> int:
+        self.cursor.execute('''
+            INSERT INTO conversation_summary (chat_id, main_topics, key_decisions, action_items, participants_involved)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (chat_id, main_topics, key_decisions, action_items, participants))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_latest_summary(self, chat_id: int = None) -> Optional[Dict]:
+        if chat_id:
+            self.cursor.execute('''
+                SELECT * FROM conversation_summary WHERE chat_id = ?
+                ORDER BY summary_date DESC LIMIT 1
+            ''', (chat_id,))
+        else:
+            self.cursor.execute('SELECT * FROM conversation_summary ORDER BY summary_date DESC LIMIT 1')
+        row = self.cursor.fetchone()
+        return dict(row) if row else None
     
     # === FUNCIONES DE PROYECTOS ===
     def add_project(self, name: str, description: str = None, client_id: int = None) -> int:
@@ -1205,6 +1313,9 @@ class PersonProfile:
     strengths: List[str] = None
     areas_to_improve: List[str] = None
     recommendations: List[str] = None
+    sentiment: str = 'neutral'
+    sentiment_score: float = 0.0
+    commitments: List[Dict] = None
 
 
 class AIAnalyzer:
@@ -1333,13 +1444,18 @@ Responde SOLO con JSON válido:
 {{
     "role": "colaborador|cliente|alumno|profesor|manager|desconocido",
     "role_confidence": 0.0-1.0,
+    "sentiment": "positive|neutral|negative",
+    "sentiment_score": -1.0 a 1.0 (negativo a positivo),
     "skills": [
         {{"name": "nombre de habilidad", "category": "técnica|comunicación|liderazgo|organización|creatividad", "score": 0-100, "evidence": "evidencia del chat"}}
     ],
     "summary": "Resumen profesional en 2-3 oraciones",
     "strengths": ["fortaleza 1", "fortaleza 2", "fortaleza 3"],
     "areas_to_improve": ["área 1", "área 2"],
-    "recommendations": ["recomendación accionable 1", "recomendación 2", "recomendación 3"]
+    "recommendations": ["recomendación accionable 1", "recomendación 2", "recomendación 3"],
+    "commitments": [
+        {{"title": "descripción corta del compromiso", "type": "promise|agreement|deadline", "due_date": "fecha si se menciona o null", "evidence": "cita del mensaje"}}
+    ]
 }}"""
 
         prompt = f"Analiza el perfil profesional de {name} basándote en sus mensajes:\n\n{messages_text}\n\nResponde SOLO con JSON válido."
@@ -1373,12 +1489,16 @@ Responde SOLO con JSON válido:
                 summary=data.get('summary', ''),
                 strengths=data.get('strengths', []),
                 areas_to_improve=data.get('areas_to_improve', []),
-                recommendations=data.get('recommendations', [])
+                recommendations=data.get('recommendations', []),
+                sentiment=data.get('sentiment', 'neutral'),
+                sentiment_score=float(data.get('sentiment_score', 0.0)),
+                commitments=data.get('commitments', [])
             )
         except Exception as e:
             print(f"Error analizando persona {name}: {e}")
             return PersonProfile(name=name, role=PersonRole.UNKNOWN, 
-                               role_confidence=0.0, skills=[], summary="")
+                               role_confidence=0.0, skills=[], summary="",
+                               sentiment='neutral', sentiment_score=0.0, commitments=[])
     
     def detect_patterns(self, messages: List[Dict], participants: Dict) -> List[Dict]:
         messages_text = self._format_messages(messages[:200])
@@ -1630,14 +1750,18 @@ class PersonCard(Card):
     analyze_clicked = pyqtSignal(int)  # Señal para solicitar análisis de persona
     
     def __init__(self, person_id: int, name: str, role: str, skills: list = None,
-                 message_count: int = 0, is_me: bool = False, ai_analyzed: bool = False, parent=None):
+                 message_count: int = 0, is_me: bool = False, ai_analyzed: bool = False,
+                 sentiment: str = 'neutral', sentiment_score: float = 0.0, parent=None):
         super().__init__(parent)
         self.person_id = person_id
         self.name = name
         self.ai_analyzed = ai_analyzed
-        self._setup_ui(name, role, skills, message_count, is_me, ai_analyzed)
+        self.sentiment = sentiment
+        self.sentiment_score = sentiment_score
+        self._setup_ui(name, role, skills, message_count, is_me, ai_analyzed, sentiment, sentiment_score)
         
-    def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool, ai_analyzed: bool):
+    def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool, ai_analyzed: bool,
+                   sentiment: str = 'neutral', sentiment_score: float = 0.0):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -1709,6 +1833,24 @@ class PersonCard(Card):
             ai_badge.setFixedHeight(18)
             ai_badge.setToolTip("Esta persona ya fue analizada con IA")
             badges_layout.addWidget(ai_badge)
+            
+            # Badge de sentimiento (solo si ya fue analizado)
+            sentiment_config = {
+                'positive': ('😊', '#10B981', '#D1FAE5', 'Sentimiento positivo'),
+                'neutral': ('😐', '#6B7280', '#F3F4F6', 'Sentimiento neutro'),
+                'negative': ('😟', '#EF4444', '#FEE2E2', 'Sentimiento negativo')
+            }
+            emoji, color, bg_color, tooltip = sentiment_config.get(sentiment, sentiment_config['neutral'])
+            sentiment_badge = QLabel(emoji)
+            sentiment_badge.setStyleSheet(f"""
+                background-color: {bg_color};
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 12px;
+            """)
+            sentiment_badge.setFixedHeight(18)
+            sentiment_badge.setToolTip(f"{tooltip} ({sentiment_score:.1%})")
+            badges_layout.addWidget(sentiment_badge)
         
         name_row.addLayout(badges_layout)
         name_row.addStretch()
@@ -2532,13 +2674,15 @@ class MainWindow(QMainWindow):
         self.tasks_page = self._create_tasks_page()
         self.patterns_page = self._create_patterns_page()
         self.settings_page = self._create_settings_page()
+        self.commitments_page = self._create_commitments_page()
         
-        self.content_stack.addWidget(self.dashboard_page)
-        self.content_stack.addWidget(self.my_profile_page)
-        self.content_stack.addWidget(self.persons_page)
-        self.content_stack.addWidget(self.tasks_page)
-        self.content_stack.addWidget(self.patterns_page)
-        self.content_stack.addWidget(self.settings_page)
+        self.content_stack.addWidget(self.dashboard_page)  # 0
+        self.content_stack.addWidget(self.my_profile_page)  # 1
+        self.content_stack.addWidget(self.persons_page)     # 2
+        self.content_stack.addWidget(self.tasks_page)       # 3
+        self.content_stack.addWidget(self.patterns_page)    # 4
+        self.content_stack.addWidget(self.settings_page)    # 5
+        self.content_stack.addWidget(self.commitments_page) # 6
         
         self.loading_overlay = LoadingOverlay(self)
         self.loading_overlay.hide()
@@ -2593,6 +2737,7 @@ class MainWindow(QMainWindow):
             ("☰", "Usuarios", 2),
             ("☐", "Tareas", 3),
             ("≡", "Patrones", 4),
+            ("🤝", "Compromisos", 6),
             ("⚙", "Configuración", 5),
         ]
         
@@ -4260,6 +4405,229 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.patterns_empty)
         
         return page
+    
+    def _create_commitments_page(self) -> QWidget:
+        """Crea la página de compromisos detectados"""
+        page = QWidget()
+        page.setStyleSheet(f"background-color: {COLORS['bg_primary']};")
+        
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        header = QLabel("🤝 Compromisos Detectados")
+        header.setStyleSheet(f"""
+            color: {COLORS['text_primary']};
+            font-size: 28px;
+            font-weight: 700;
+        """)
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+        
+        # Filtro de estado
+        self.commitment_filter = QComboBox()
+        self.commitment_filter.addItems(["Todos", "Pendientes", "Completados", "Cancelados"])
+        self.commitment_filter.setStyleSheet(f"""
+            QComboBox {{
+                background: white;
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 8px 16px;
+                min-width: 150px;
+            }}
+        """)
+        self.commitment_filter.currentTextChanged.connect(self._load_commitments)
+        header_layout.addWidget(self.commitment_filter)
+        
+        layout.addLayout(header_layout)
+        
+        # Descripción
+        desc = QLabel("Promesas, acuerdos y compromisos detectados automáticamente en las conversaciones.")
+        desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 14px;")
+        layout.addWidget(desc)
+        
+        # Scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        self.commitments_list = QVBoxLayout(scroll_content)
+        self.commitments_list.setSpacing(12)
+        self.commitments_list.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+        
+        # Estado vacío
+        self.commitments_empty = EmptyState(
+            "🤝",
+            "No hay compromisos detectados",
+            "Los compromisos se detectan automáticamente al analizar personas con IA.",
+        )
+        self.commitments_empty.hide()
+        layout.addWidget(self.commitments_empty)
+        
+        return page
+    
+    def _load_commitments(self, filter_text: str = None):
+        """Carga los compromisos en la lista"""
+        self._clear_layout(self.commitments_list)
+        
+        # Mapear filtro a estado
+        status_map = {
+            "Pendientes": "pending",
+            "Completados": "completed",
+            "Cancelados": "cancelled"
+        }
+        status = status_map.get(filter_text)
+        
+        commitments = self.db.get_all_commitments(status)
+        
+        if not commitments:
+            self.commitments_empty.show()
+            return
+        
+        self.commitments_empty.hide()
+        
+        for commitment in commitments:
+            card = self._create_commitment_card(commitment)
+            self.commitments_list.addWidget(card)
+        
+        self.commitments_list.addStretch()
+    
+    def _create_commitment_card(self, commitment: dict) -> QFrame:
+        """Crea una tarjeta de compromiso"""
+        card = QFrame()
+        
+        # Color según tipo
+        type_colors = {
+            'promise': ('#EFF6FF', '#BFDBFE', '#3B82F6'),
+            'agreement': ('#F0FDF4', '#BBF7D0', '#10B981'),
+            'deadline': ('#FEF3C7', '#FDE68A', '#F59E0B')
+        }
+        bg, border, accent = type_colors.get(commitment.get('commitment_type', 'promise'), type_colors['promise'])
+        
+        # Estado
+        status = commitment.get('status', 'pending')
+        status_styles = {
+            'pending': ('⏳', 'Pendiente', '#F59E0B'),
+            'completed': ('✅', 'Completado', '#10B981'),
+            'cancelled': ('❌', 'Cancelado', '#EF4444')
+        }
+        status_icon, status_text, status_color = status_styles.get(status, status_styles['pending'])
+        
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-left: 4px solid {accent};
+                border-radius: 12px;
+            }}
+        """)
+        
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(20, 16, 20, 16)
+        c_layout.setSpacing(10)
+        
+        # Header
+        header = QHBoxLayout()
+        
+        # Tipo
+        type_names = {'promise': '💬 Promesa', 'agreement': '🤝 Acuerdo', 'deadline': '📅 Fecha límite'}
+        type_label = QLabel(type_names.get(commitment.get('commitment_type', 'promise'), '💬 Promesa'))
+        type_label.setStyleSheet(f"color: {accent}; font-size: 12px; font-weight: 600;")
+        header.addWidget(type_label)
+        
+        header.addStretch()
+        
+        # Persona
+        person_label = QLabel(f"👤 {commitment.get('person_name', 'Desconocido')}")
+        person_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        header.addWidget(person_label)
+        
+        # Estado badge
+        status_badge = QLabel(f"{status_icon} {status_text}")
+        status_badge.setStyleSheet(f"""
+            color: {status_color};
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 8px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 6px;
+        """)
+        header.addWidget(status_badge)
+        
+        c_layout.addLayout(header)
+        
+        # Título
+        title = QLabel(commitment.get('title', 'Sin título'))
+        title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 15px; font-weight: 600;")
+        title.setWordWrap(True)
+        c_layout.addWidget(title)
+        
+        # Evidencia
+        if commitment.get('evidence'):
+            evidence = QLabel(f'"{commitment["evidence"]}"')
+            evidence.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; font-style: italic;")
+            evidence.setWordWrap(True)
+            c_layout.addWidget(evidence)
+        
+        # Fecha límite
+        if commitment.get('due_date'):
+            due_label = QLabel(f"📅 Fecha límite: {commitment['due_date']}")
+            due_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            c_layout.addWidget(due_label)
+        
+        # Botones de acción
+        if status == 'pending':
+            actions = QHBoxLayout()
+            actions.addStretch()
+            
+            complete_btn = QPushButton("✓ Completar")
+            complete_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {COLORS['success']};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{ background: #059669; }}
+            """)
+            complete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            complete_btn.clicked.connect(lambda _, cid=commitment['id']: self._update_commitment(cid, 'completed'))
+            actions.addWidget(complete_btn)
+            
+            cancel_btn = QPushButton("✕ Cancelar")
+            cancel_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    color: {COLORS['text_muted']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{ background: #FEE2E2; color: #EF4444; }}
+            """)
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.clicked.connect(lambda _, cid=commitment['id']: self._update_commitment(cid, 'cancelled'))
+            actions.addWidget(cancel_btn)
+            
+            c_layout.addLayout(actions)
+        
+        return card
+    
+    def _update_commitment(self, commitment_id: int, status: str):
+        """Actualiza el estado de un compromiso"""
+        self.db.update_commitment_status(commitment_id, status)
+        self._load_commitments(self.commitment_filter.currentText())
         
     def _create_settings_page(self) -> QWidget:
         page = QWidget()
@@ -4582,6 +4950,7 @@ class MainWindow(QMainWindow):
         self._populate_person_filter()  # Llenar filtro de personas
         self._load_tasks()
         self._load_patterns()
+        self._load_commitments()
         self._update_me_selector()
         self._load_my_profile()
         
@@ -4746,11 +5115,14 @@ class MainWindow(QMainWindow):
             skills = person_data.get('skills', []) if person_data else []
             is_me = me and person['id'] == me['id']
             ai_analyzed = bool(person.get('ai_analyzed', 0))
+            sentiment = person.get('sentiment', 'neutral')
+            sentiment_score = float(person.get('sentiment_score', 0.0) or 0.0)
             
             card = PersonCard(
                 person['id'], person['name'], person.get('role', 'desconocido'),
                 skills=skills, message_count=person.get('total_messages', 0),
-                is_me=is_me, ai_analyzed=ai_analyzed
+                is_me=is_me, ai_analyzed=ai_analyzed,
+                sentiment=sentiment, sentiment_score=sentiment_score
             )
             card.clicked.connect(lambda p=person: self._show_person_detail(p))
             card.analyze_clicked.connect(self._analyze_person_from_card)
@@ -4827,31 +5199,45 @@ class MainWindow(QMainWindow):
         if result.get('role'):
             self.db.update_person(person_id, role=result['role'], role_confidence=result.get('role_confidence', 0.8))
         
+        # Actualizar sentimiento
+        if result.get('sentiment'):
+            self.db.update_person(
+                person_id, 
+                sentiment=result.get('sentiment', 'neutral'),
+                sentiment_score=result.get('sentiment_score', 0.0)
+            )
+        
         # Guardar skills
         if result.get('skills'):
             for skill in result['skills']:
-                self.db.add_skill(person_id, skill.get('name', skill), skill.get('level', 50))
+                skill_id = self.db.add_skill(skill.get('name', ''), skill.get('category', 'otro'))
+                self.db.add_person_skill(person_id, skill_id, skill.get('score', 50), skill.get('evidence', ''))
         
-        # Guardar patrones de comportamiento
-        if result.get('patterns'):
-            for pattern in result['patterns']:
-                self.db.add_pattern(
-                    person_id,
-                    pattern.get('type', 'general'),
-                    pattern.get('description', ''),
-                    pattern.get('frequency', 'occasional'),
-                    pattern.get('examples', [])
+        # Guardar compromisos detectados
+        commitments_count = 0
+        if result.get('commitments'):
+            for commitment in result['commitments']:
+                self.db.add_commitment(
+                    person_id=person_id,
+                    title=commitment.get('title', ''),
+                    commitment_type=commitment.get('type', 'promise'),
+                    due_date=commitment.get('due_date'),
+                    evidence=commitment.get('evidence')
                 )
+                commitments_count += 1
         
         # Recargar datos
         self._load_data()
         
+        sentiment_emoji = {'positive': '😊', 'neutral': '😐', 'negative': '😟'}.get(result.get('sentiment', 'neutral'), '😐')
+        
         QMessageBox.information(
-            self, "Análisis completado",
-            f"Análisis de persona completado.\n\n"
+            self, "✅ Análisis Completado",
+            f"Se analizó el perfil:\n\n"
             f"• Rol detectado: {result.get('role', 'No detectado')}\n"
+            f"• Sentimiento: {sentiment_emoji} {result.get('sentiment', 'neutral')}\n"
             f"• Skills: {len(result.get('skills', []))}\n"
-            f"• Patrones: {len(result.get('patterns', []))}"
+            f"• Compromisos: {commitments_count}"
         )
     
     def _on_person_analysis_error(self, error_msg: str):
@@ -5156,11 +5542,24 @@ class MainWindow(QMainWindow):
             self.db.update_person(
                 person_id, role=profile.role.value,
                 role_confidence=profile.role_confidence,
-                profile_summary=profile.summary
+                profile_summary=profile.summary,
+                sentiment=profile.sentiment,
+                sentiment_score=profile.sentiment_score
             )
             for skill in profile.skills:
                 skill_id = self.db.add_skill(skill.name, skill.category)
                 self.db.add_person_skill(person_id, skill_id, skill.score, skill.evidence)
+            
+            # Guardar compromisos detectados
+            if profile.commitments:
+                for commitment in profile.commitments:
+                    self.db.add_commitment(
+                        person_id=person_id,
+                        title=commitment.get('title', ''),
+                        commitment_type=commitment.get('type', 'promise'),
+                        due_date=commitment.get('due_date'),
+                        evidence=commitment.get('evidence')
+                    )
                 
         # Save patterns
         for pattern in results.get('patterns', []):
