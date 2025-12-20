@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.0"
+APP_VERSION = "2.9.1"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3362,146 +3362,153 @@ class MainWindow(QMainWindow):
         
     def _load_profile_alertas(self, layout: QVBoxLayout, me: dict):
         """Carga la pestaña de alertas de comportamiento"""
-        header_row = QHBoxLayout()
-        header = QLabel("🛡️ Alertas de Comportamiento")
-        header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
-        header_row.addWidget(header)
-        header_row.addStretch()
-        layout.addLayout(header_row)
-        
-        # Descripción
-        desc = QLabel("Este sistema analiza los chats para detectar comportamientos problemáticos como inconsistencias, abuso de conocimiento, manipulación emocional, posibles mentiras y otras señales de alerta.")
-        desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; margin-bottom: 16px;")
-        layout.addWidget(desc)
-        
-        # Controles de análisis
-        controls_card = QFrame()
-        controls_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS['card_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 12px;
-            }}
-        """)
-        controls_layout = QVBoxLayout(controls_card)
-        controls_layout.setContentsMargins(16, 16, 16, 16)
-        controls_layout.setSpacing(12)
-        
-        # Fila de selección de persona
-        person_row = QHBoxLayout()
-        person_label = QLabel("👤 Analizar a:")
-        person_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
-        person_row.addWidget(person_label)
-        
-        self.alert_person_combo = QComboBox()
-        self.alert_person_combo.setStyleSheet(f"""
-            QComboBox {{
-                background-color: {COLORS['bg_secondary']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 8px;
-                padding: 8px 12px;
-                min-width: 200px;
-                color: {COLORS['text_primary']};
-            }}
-        """)
-        self.alert_person_combo.addItem("👥 Todas las personas", None)
-        persons = self.db.get_all_persons(min_messages=1)
-        for p in persons:
-            if p['name'] != me.get('name', ''):
-                self.alert_person_combo.addItem(p['name'], p['id'])
-        person_row.addWidget(self.alert_person_combo)
-        person_row.addStretch()
-        controls_layout.addLayout(person_row)
-        
-        # Fila de botones
-        btn_row = QHBoxLayout()
-        
-        # Botón analizar seleccionado
-        self.analyze_selected_btn = QPushButton("🔍 Analizar")
-        self.analyze_selected_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3B82F6;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #2563EB;
-            }
-            QPushButton:disabled {
-                background-color: #94A3B8;
-            }
-        """)
-        self.analyze_selected_btn.clicked.connect(self._analyze_selected_person)
-        btn_row.addWidget(self.analyze_selected_btn)
-        
-        # Indicador de progreso (oculto por defecto)
-        self.alert_progress_label = QLabel("")
-        self.alert_progress_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
-        self.alert_progress_label.hide()
-        btn_row.addWidget(self.alert_progress_label)
-        
-        btn_row.addStretch()
-        controls_layout.addLayout(btn_row)
-        
-        layout.addWidget(controls_card)
-        layout.addSpacing(16)
-        
-        # Obtener alertas
-        alerts = self.db.get_all_alerts(include_dismissed=False)
-        
-        if alerts:
-            # Resumen de alertas
-            summary = self.db.get_alerts_summary()
-            summary_card = QFrame()
-            summary_card.setStyleSheet("""
-                QFrame {
-                    background-color: #FEF2F2;
-                    border: 1px solid #FECACA;
+        try:
+            header_row = QHBoxLayout()
+            header = QLabel("🛡️ Alertas de Comportamiento")
+            header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
+            header_row.addWidget(header)
+            header_row.addStretch()
+            layout.addLayout(header_row)
+            
+            # Descripción
+            desc = QLabel("Este sistema analiza los chats para detectar comportamientos problemáticos como inconsistencias, abuso de conocimiento, manipulación emocional, posibles mentiras y otras señales de alerta.")
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; margin-bottom: 16px;")
+            layout.addWidget(desc)
+            
+            # Controles de análisis
+            controls_card = QFrame()
+            controls_card.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {COLORS['card_bg']};
+                    border: 1px solid {COLORS['border']};
                     border-radius: 12px;
+                }}
+            """)
+            controls_layout = QVBoxLayout(controls_card)
+            controls_layout.setContentsMargins(16, 16, 16, 16)
+            controls_layout.setSpacing(12)
+            
+            # Fila de selección de persona
+            person_row = QHBoxLayout()
+            person_label = QLabel("👤 Analizar a:")
+            person_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
+            person_row.addWidget(person_label)
+            
+            self.alert_person_combo = QComboBox()
+            self.alert_person_combo.setStyleSheet(f"""
+                QComboBox {{
+                    background-color: {COLORS['bg_secondary']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    min-width: 200px;
+                    color: {COLORS['text_primary']};
+                }}
+            """)
+            self.alert_person_combo.addItem("-- Selecciona una persona --", None)
+            persons = self.db.get_all_persons(min_messages=1)
+            for p in persons:
+                if p['name'] != me.get('name', ''):
+                    self.alert_person_combo.addItem(p['name'], p['id'])
+            person_row.addWidget(self.alert_person_combo)
+            person_row.addStretch()
+            controls_layout.addLayout(person_row)
+            
+            # Fila de botones
+            btn_row = QHBoxLayout()
+            
+            # Botón analizar seleccionado
+            self.analyze_selected_btn = QPushButton("🔍 Analizar")
+            self.analyze_selected_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3B82F6;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #2563EB;
+                }
+                QPushButton:disabled {
+                    background-color: #94A3B8;
                 }
             """)
-            s_layout = QHBoxLayout(summary_card)
-            s_layout.setContentsMargins(16, 12, 16, 12)
+            self.analyze_selected_btn.clicked.connect(self._analyze_selected_person)
+            btn_row.addWidget(self.analyze_selected_btn)
             
-            total_label = QLabel(f"⚠️ {summary['total']} alertas activas")
-            total_label.setStyleSheet("color: #DC2626; font-size: 14px; font-weight: 600;")
-            s_layout.addWidget(total_label)
-            s_layout.addStretch()
+            # Indicador de progreso (oculto por defecto)
+            self.alert_progress_label = QLabel("")
+            self.alert_progress_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            self.alert_progress_label.hide()
+            btn_row.addWidget(self.alert_progress_label)
             
-            if summary['by_severity']['high'] > 0:
-                high_badge = QLabel(f"🔴 {summary['by_severity']['high']} alta")
-                high_badge.setStyleSheet("color: #DC2626; font-size: 12px;")
-                s_layout.addWidget(high_badge)
-            if summary['by_severity']['medium'] > 0:
-                med_badge = QLabel(f"🟠 {summary['by_severity']['medium']} media")
-                med_badge.setStyleSheet("color: #F59E0B; font-size: 12px; margin-left: 8px;")
-                s_layout.addWidget(med_badge)
-            if summary['by_severity']['low'] > 0:
-                low_badge = QLabel(f"🟢 {summary['by_severity']['low']} baja")
-                low_badge.setStyleSheet("color: #10B981; font-size: 12px; margin-left: 8px;")
-                s_layout.addWidget(low_badge)
+            btn_row.addStretch()
+            controls_layout.addLayout(btn_row)
             
-            layout.addWidget(summary_card)
+            layout.addWidget(controls_card)
             layout.addSpacing(16)
             
-            # Lista de alertas
-            for alert in alerts:
-                alert_card = self._create_alert_card(alert)
-                layout.addWidget(alert_card)
-        else:
-            empty = EmptyState(
-                "✅",
-                "Sin alertas detectadas",
-                "No se han detectado comportamientos problemáticos. Haz clic en 'Analizar Comportamientos' para escanear los chats."
-            )
-            layout.addWidget(empty)
-        
-        layout.addStretch()
+            # Obtener alertas
+            alerts = self.db.get_all_alerts(include_dismissed=False)
+            
+            if alerts:
+                # Resumen de alertas
+                summary = self.db.get_alerts_summary()
+                summary_card = QFrame()
+                summary_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #FEF2F2;
+                        border: 1px solid #FECACA;
+                        border-radius: 12px;
+                    }
+                """)
+                s_layout = QHBoxLayout(summary_card)
+                s_layout.setContentsMargins(16, 12, 16, 12)
+                
+                total_label = QLabel(f"⚠️ {summary['total']} alertas activas")
+                total_label.setStyleSheet("color: #DC2626; font-size: 14px; font-weight: 600;")
+                s_layout.addWidget(total_label)
+                s_layout.addStretch()
+                
+                if summary['by_severity']['high'] > 0:
+                    high_badge = QLabel(f"🔴 {summary['by_severity']['high']} alta")
+                    high_badge.setStyleSheet("color: #DC2626; font-size: 12px;")
+                    s_layout.addWidget(high_badge)
+                if summary['by_severity']['medium'] > 0:
+                    med_badge = QLabel(f"🟠 {summary['by_severity']['medium']} media")
+                    med_badge.setStyleSheet("color: #F59E0B; font-size: 12px; margin-left: 8px;")
+                    s_layout.addWidget(med_badge)
+                if summary['by_severity']['low'] > 0:
+                    low_badge = QLabel(f"🟢 {summary['by_severity']['low']} baja")
+                    low_badge.setStyleSheet("color: #10B981; font-size: 12px; margin-left: 8px;")
+                    s_layout.addWidget(low_badge)
+                
+                layout.addWidget(summary_card)
+                layout.addSpacing(16)
+                
+                # Lista de alertas
+                for alert in alerts:
+                    alert_card = self._create_alert_card(alert)
+                    layout.addWidget(alert_card)
+            else:
+                empty = EmptyState(
+                    "✅",
+                    "Sin alertas detectadas",
+                    "No se han detectado comportamientos problemáticos. Selecciona una persona y haz clic en 'Analizar' para escanear sus mensajes."
+                )
+                layout.addWidget(empty)
+            
+            layout.addStretch()
+        except Exception as e:
+            error_label = QLabel(f"❌ Error al cargar alertas: {str(e)}")
+            error_label.setStyleSheet("color: #DC2626; font-size: 13px;")
+            error_label.setWordWrap(True)
+            layout.addWidget(error_label)
+            layout.addStretch()
     
     def _create_alert_card(self, alert: dict) -> QFrame:
         """Crea una tarjeta de alerta de comportamiento"""
