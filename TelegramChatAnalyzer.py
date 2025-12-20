@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.1.1"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2003,34 +2003,38 @@ class PersonCard(Card):
             skills_layout.addStretch()
             layout.addWidget(skills_container)
         
-        # Botón de analizar (solo si no está analizado)
-        if not ai_analyzed:
-            analyze_btn = QPushButton("🤖 Analizar con IA")
-            analyze_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {COLORS['accent_soft']};
-                    color: {COLORS['accent']};
-                    border: 1px solid {COLORS['accent']};
-                    border-radius: 6px;
-                    padding: 6px 12px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background-color: {COLORS['accent']};
-                    color: white;
-                }}
-            """)
-            analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            analyze_btn.clicked.connect(self._on_analyze_clicked)
-            layout.addWidget(analyze_btn)
+        # Botón de analizar (siempre visible, cambia texto si ya analizado)
+        btn_text = "🔄 Re-analizar" if ai_analyzed else "🤖 Analizar con IA"
+        btn_color = COLORS['text_muted'] if ai_analyzed else COLORS['accent']
+        btn_bg = COLORS['bg_secondary'] if ai_analyzed else COLORS['accent_soft']
+        
+        analyze_btn = QPushButton(btn_text)
+        analyze_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {btn_bg};
+                color: {btn_color};
+                border: 1px solid {btn_color};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent']};
+                color: white;
+                border-color: {COLORS['accent']};
+            }}
+        """)
+        analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        analyze_btn.clicked.connect(self._on_analyze_clicked)
+        layout.addWidget(analyze_btn)
         
         # Espaciador para empujar contenido arriba
         layout.addStretch()
         
         # Tamaño mínimo más flexible
         self.setMinimumWidth(280)
-        self.setMinimumHeight(160 if ai_analyzed else 180)
+        self.setMinimumHeight(180)  # Siempre hay botón de analizar
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
     
