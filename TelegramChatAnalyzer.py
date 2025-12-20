@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.6"
+APP_VERSION = "3.1.7"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3897,6 +3897,9 @@ class MainWindow(QMainWindow):
     def _load_profile_alertas(self, layout: QVBoxLayout, me: dict):
         """Carga la pestaña de alertas de comportamiento - Diseño según mockup"""
         try:
+            # Obtener filtro actual (si existe)
+            current_filter = getattr(self, 'current_alert_filter', 'all')
+            
             # Obtener alertas primero para contar por tipo
             all_alerts = self.db.get_all_alerts(include_dismissed=False)
             
@@ -3921,8 +3924,8 @@ class MainWindow(QMainWindow):
             # Tab "Todas"
             all_btn = QPushButton(f"Todas ({type_counts['all']})")
             all_btn.setCheckable(True)
-            all_btn.setChecked(True)
-            all_btn.setStyleSheet(self._get_tab_style(True))
+            all_btn.setChecked(current_filter == 'all')
+            all_btn.setStyleSheet(self._get_tab_style(current_filter == 'all'))
             all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             all_btn.clicked.connect(lambda: self._filter_alerts_by_type('all'))
             tabs_row.addWidget(all_btn)
@@ -3933,7 +3936,8 @@ class MainWindow(QMainWindow):
                 if type_counts[type_id] > 0:
                     btn = QPushButton(f"{type_name} ({type_counts[type_id]})")
                     btn.setCheckable(True)
-                    btn.setStyleSheet(self._get_tab_style(False))
+                    btn.setChecked(current_filter == type_id)
+                    btn.setStyleSheet(self._get_tab_style(current_filter == type_id))
                     btn.setCursor(Qt.CursorShape.PointingHandCursor)
                     btn.clicked.connect(lambda checked, tid=type_id: self._filter_alerts_by_type(tid))
                     tabs_row.addWidget(btn)
@@ -3988,9 +3992,15 @@ class MainWindow(QMainWindow):
             
             # === LISTA DE ALERTAS ===
             if all_alerts:
+                # Aplicar filtro por tipo
+                if current_filter != 'all':
+                    filtered_alerts = [a for a in all_alerts if a.get('alert_type') == current_filter]
+                else:
+                    filtered_alerts = all_alerts
+                
                 # Ordenar por severidad: high > medium > low
                 severity_order = {'high': 0, 'medium': 1, 'low': 2}
-                sorted_alerts = sorted(all_alerts, key=lambda a: severity_order.get(a.get('severity', 'medium'), 1))
+                sorted_alerts = sorted(filtered_alerts, key=lambda a: severity_order.get(a.get('severity', 'medium'), 1))
                 
                 # Crear scroll area para las alertas
                 scroll = QScrollArea()
@@ -4130,12 +4140,10 @@ class MainWindow(QMainWindow):
     
     def _filter_alerts_by_type(self, type_id: str):
         """Filtra las alertas por tipo"""
-        # Actualizar estado visual de tabs
-        for tid, btn in self.alert_type_buttons.items():
-            btn.setChecked(tid == type_id)
-            btn.setStyleSheet(self._get_tab_style(tid == type_id))
+        # Guardar filtro actual
+        self.current_alert_filter = type_id
         
-        # Recargar pestaña (en el futuro: filtrar sin recargar)
+        # Recargar pestaña con el nuevo filtro
         self._load_profile_tab_content(7)
     
     def _create_alert_card(self, alert: dict) -> QFrame:
