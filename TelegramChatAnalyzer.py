@@ -3988,6 +3988,15 @@ class MainWindow(QMainWindow):
             
             # === LISTA DE ALERTAS ===
             if all_alerts:
+                # DEBUG: Imprimir datos de alertas
+                print(f"\n=== DEBUG ALERTAS ===")
+                for i, a in enumerate(all_alerts[:3]):
+                    print(f"Alerta {i+1}: id={a.get('id')}, type={a.get('alert_type')}, severity={a.get('severity')}")
+                    print(f"  title={repr(a.get('title'))}")
+                    print(f"  description={repr(a.get('description')[:50] if a.get('description') else None)}")
+                    print(f"  person_name={repr(a.get('person_name'))}")
+                print(f"=== FIN DEBUG ===\n")
+                
                 # Ordenar por severidad: high > medium > low
                 severity_order = {'high': 0, 'medium': 1, 'low': 2}
                 sorted_alerts = sorted(all_alerts, key=lambda a: severity_order.get(a.get('severity', 'medium'), 1))
