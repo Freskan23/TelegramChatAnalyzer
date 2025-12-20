@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.8"
+APP_VERSION = "2.9.9"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -462,6 +462,31 @@ class Database:
         ''')
         
         self.conn.commit()
+        
+        # Migraciones automáticas para bases de datos existentes
+        self._run_migrations()
+    
+    def _run_migrations(self):
+        """Ejecuta migraciones para actualizar esquema de BD existentes"""
+        # Obtener columnas existentes en persons
+        self.cursor.execute("PRAGMA table_info(persons)")
+        existing_columns = {row[1] for row in self.cursor.fetchall()}
+        
+        # Migración: añadir ai_analyzed si no existe
+        if 'ai_analyzed' not in existing_columns:
+            try:
+                self.cursor.execute('ALTER TABLE persons ADD COLUMN ai_analyzed INTEGER DEFAULT 0')
+                self.conn.commit()
+            except:
+                pass
+        
+        # Migración: añadir ai_analyzed_at si no existe
+        if 'ai_analyzed_at' not in existing_columns:
+            try:
+                self.cursor.execute('ALTER TABLE persons ADD COLUMN ai_analyzed_at TIMESTAMP')
+                self.conn.commit()
+            except:
+                pass
         
     def add_chat(self, name: str, chat_type: str = 'group', file_path: str = None) -> int:
         self.cursor.execute(
