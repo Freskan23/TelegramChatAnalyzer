@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.7"
+APP_VERSION = "2.9.8"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3769,29 +3769,32 @@ class MainWindow(QMainWindow):
         
         # Color según severidad
         severity_colors = {
-            'high': ('#FEF2F2', '#FECACA', '#DC2626'),
-            'medium': ('#FFFBEB', '#FDE68A', '#F59E0B'),
-            'low': ('#F0FDF4', '#BBF7D0', '#10B981')
+            'high': ('#FEF2F2', '#FECACA', '#DC2626', 'Alta'),
+            'medium': ('#FFFBEB', '#FDE68A', '#F59E0B', 'Media'),
+            'low': ('#F0FDF4', '#BBF7D0', '#10B981', 'Baja')
         }
-        bg, border, accent = severity_colors.get(alert.get('severity', 'medium'), severity_colors['medium'])
+        colors = severity_colors.get(alert.get('severity', 'medium'), severity_colors['medium'])
+        bg, border, accent, severity_text = colors
         
         card.setStyleSheet(f"""
             QFrame {{
                 background-color: {bg};
-                border: 1px solid {border};
-                border-left: 4px solid {accent};
+                border: 2px solid {border};
+                border-left: 5px solid {accent};
                 border-radius: 12px;
+                margin-bottom: 8px;
             }}
         """)
         
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(16, 16, 16, 16)
-        c_layout.setSpacing(10)
+        c_layout.setContentsMargins(20, 16, 20, 16)
+        c_layout.setSpacing(12)
         
-        # Header con tipo y persona
+        # Header con tipo, severidad y botón descartar
         header_row = QHBoxLayout()
+        header_row.setSpacing(12)
         
-        # Icono de tipo
+        # Icono y tipo de alerta
         type_icons = {
             'inconsistency': '🎭',
             'knowledge_abuse': '💰',
@@ -3811,39 +3814,71 @@ class MainWindow(QMainWindow):
         type_icon = type_icons.get(alert_type, '⚠️')
         type_name = type_names.get(alert_type, 'Alerta')
         
-        type_label = QLabel(f"{type_icon} {type_name}")
-        type_label.setStyleSheet(f"color: {accent}; font-size: 12px; font-weight: 600;")
+        type_label = QLabel(f"{type_icon} {type_name.upper()}")
+        type_label.setStyleSheet(f"""
+            color: {accent};
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        """)
         header_row.addWidget(type_label)
+        
+        # Badge de severidad
+        severity_badge = QLabel(f"● {severity_text}")
+        severity_badge.setStyleSheet(f"""
+            color: {accent};
+            font-size: 12px;
+            font-weight: 600;
+        """)
+        header_row.addWidget(severity_badge)
         
         header_row.addStretch()
         
-        # Persona
+        # Persona afectada
         person_label = QLabel(f"👤 {alert.get('person_name', 'Desconocido')}")
-        person_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        person_label.setStyleSheet(f"""
+            color: {COLORS['text_secondary']};
+            font-size: 13px;
+            font-weight: 500;
+        """)
         header_row.addWidget(person_label)
         
         # Botón descartar
-        dismiss_btn = QPushButton("✕")
-        dismiss_btn.setFixedSize(24, 24)
-        dismiss_btn.setStyleSheet("""
-            QPushButton {
+        dismiss_btn = QPushButton("✕ Descartar")
+        dismiss_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
-                color: #94A3B8;
-                border: none;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                color: #64748B;
-            }
+                color: {COLORS['text_muted']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background: rgba(0,0,0,0.05);
+                color: {COLORS['text_secondary']};
+            }}
         """)
+        dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss_btn.clicked.connect(lambda: self._dismiss_alert(alert['id']))
         header_row.addWidget(dismiss_btn)
         
         c_layout.addLayout(header_row)
         
-        # Título
+        # Separador
+        separator = QFrame()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet(f"background-color: {border};")
+        c_layout.addWidget(separator)
+        
+        # Título de la alerta
         title = QLabel(alert.get('title', 'Alerta'))
-        title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 15px; font-weight: 600;")
+        title.setStyleSheet(f"""
+            color: {COLORS['text_primary']};
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.4;
+        """)
         title.setWordWrap(True)
         c_layout.addWidget(title)
         
@@ -3851,45 +3886,76 @@ class MainWindow(QMainWindow):
         if alert.get('description'):
             desc = QLabel(alert['description'])
             desc.setWordWrap(True)
-            desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
+            desc.setStyleSheet(f"""
+                color: {COLORS['text_secondary']};
+                font-size: 14px;
+                line-height: 1.5;
+            """)
             c_layout.addWidget(desc)
         
-        # Evidencia
+        # Evidencia (cita del mensaje)
         if alert.get('evidence'):
             evidence_frame = QFrame()
             evidence_frame.setStyleSheet(f"""
                 QFrame {{
-                    background-color: rgba(255,255,255,0.5);
+                    background-color: rgba(255,255,255,0.7);
+                    border: 1px solid {border};
                     border-radius: 8px;
-                    padding: 8px;
                 }}
             """)
             e_layout = QVBoxLayout(evidence_frame)
-            e_layout.setContentsMargins(12, 8, 12, 8)
+            e_layout.setContentsMargins(16, 12, 16, 12)
+            e_layout.setSpacing(8)
             
-            e_label = QLabel("📝 Evidencia:")
-            e_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600;")
+            e_label = QLabel("📝 Evidencia del mensaje:")
+            e_label.setStyleSheet(f"""
+                color: {COLORS['text_muted']};
+                font-size: 12px;
+                font-weight: 600;
+            """)
             e_layout.addWidget(e_label)
             
-            e_text = QLabel(alert['evidence'])
+            e_text = QLabel(f'"{alert["evidence"]}"')
             e_text.setWordWrap(True)
-            e_text.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; font-style: italic;")
+            e_text.setStyleSheet(f"""
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+                font-style: italic;
+                line-height: 1.4;
+            """)
             e_layout.addWidget(e_text)
             
             c_layout.addWidget(evidence_frame)
         
         # Recomendación
         if alert.get('recommendation'):
-            rec_row = QHBoxLayout()
+            rec_frame = QFrame()
+            rec_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: rgba(59, 130, 246, 0.1);
+                    border-radius: 8px;
+                }}
+            """)
+            rec_layout = QHBoxLayout(rec_frame)
+            rec_layout.setContentsMargins(16, 12, 16, 12)
+            rec_layout.setSpacing(10)
+            
             rec_icon = QLabel("💡")
-            rec_icon.setStyleSheet("font-size: 14px;")
-            rec_row.addWidget(rec_icon)
+            rec_icon.setStyleSheet("font-size: 18px;")
+            rec_icon.setFixedWidth(24)
+            rec_layout.addWidget(rec_icon)
             
             rec_text = QLabel(alert['recommendation'])
             rec_text.setWordWrap(True)
-            rec_text.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: 500;")
-            rec_row.addWidget(rec_text, 1)
-            c_layout.addLayout(rec_row)
+            rec_text.setStyleSheet(f"""
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+                font-weight: 500;
+                line-height: 1.4;
+            """)
+            rec_layout.addWidget(rec_text, 1)
+            
+            c_layout.addWidget(rec_frame)
         
         return card
     
