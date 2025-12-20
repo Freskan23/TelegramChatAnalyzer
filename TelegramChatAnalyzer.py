@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.1"
+APP_VERSION = "3.1.2"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3988,8 +3988,9 @@ class MainWindow(QMainWindow):
             
             # Obtener alertas
             alerts = self.db.get_all_alerts(include_dismissed=False)
-            
+            print(f"DEBUG: Se encontraron {len(alerts) if alerts else 0} alertas")
             if alerts:
+                print(f"DEBUG: Primera alerta: {alerts[0] if alerts else 'N/A'}")
                 # === FILTROS POR TIPO ===
                 filter_card = QFrame()
                 filter_card.setStyleSheet(f"""
