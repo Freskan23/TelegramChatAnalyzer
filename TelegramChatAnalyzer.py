@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.2"
+APP_VERSION = "2.9.3"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -314,6 +314,8 @@ class Database:
                 profile_summary TEXT,
                 total_messages INTEGER DEFAULT 0,
                 is_me INTEGER DEFAULT 0,
+                ai_analyzed INTEGER DEFAULT 0,
+                ai_analyzed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -514,7 +516,7 @@ class Database:
         self.conn.commit()
     
     def update_person(self, person_id: int, **kwargs):
-        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me']
+        allowed = ['name', 'role', 'role_confidence', 'profile_summary', 'total_messages', 'is_me', 'ai_analyzed', 'ai_analyzed_at']
         updates = []
         values = []
         for key, value in kwargs.items():
@@ -1045,14 +1047,19 @@ class TelegramHTMLParser:
     def _parse_date(self, date_str: str) -> Optional[str]:
         if not date_str:
             return None
+        
+        # Limpiar zona horaria UTC+XX:XX o UTC-XX:XX
+        clean_date = re.sub(r'\s*UTC[+-]\d{2}:\d{2}', '', date_str.strip())
+        
         formats = [
             '%d.%m.%Y %H:%M:%S', '%d.%m.%Y %H:%M',
             '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M',
             '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M',
+            '%d %B %Y',  # Para fechas de servicio como "4 April 2021"
         ]
         for fmt in formats:
             try:
-                dt = datetime.strptime(date_str.strip(), fmt)
+                dt = datetime.strptime(clean_date.strip(), fmt)
                 return dt.isoformat()
             except ValueError:
                 continue
@@ -1595,15 +1602,19 @@ class StatCard(QFrame):
 
 
 class PersonCard(Card):
+    analyze_clicked = pyqtSignal(int)  # Señal para solicitar análisis de persona
+    
     def __init__(self, person_id: int, name: str, role: str, skills: list = None,
-                 message_count: int = 0, is_me: bool = False, parent=None):
+                 message_count: int = 0, is_me: bool = False, ai_analyzed: bool = False, parent=None):
         super().__init__(parent)
         self.person_id = person_id
-        self._setup_ui(name, role, skills, message_count, is_me)
+        self.name = name
+        self.ai_analyzed = ai_analyzed
+        self._setup_ui(name, role, skills, message_count, is_me, ai_analyzed)
         
-    def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool):
+    def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool, ai_analyzed: bool):
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
@@ -1647,6 +1658,21 @@ class PersonCard(Card):
                 font-weight: 700;
             """)
             name_layout.addWidget(me_badge)
+        
+        # Indicador de IA analizado
+        if ai_analyzed:
+            ai_badge = QLabel("✓ IA")
+            ai_badge.setStyleSheet(f"""
+                background-color: {COLORS['success_soft']};
+                color: {COLORS['success']};
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 700;
+            """)
+            ai_badge.setToolTip("Esta persona ya fue analizada con IA")
+            name_layout.addWidget(ai_badge)
+        
         name_layout.addStretch()
         info_layout.addLayout(name_layout)
         
@@ -1691,10 +1717,35 @@ class PersonCard(Card):
                 skills_layout.addWidget(skill_badge)
             skills_layout.addStretch()
             layout.addLayout(skills_layout)
+        
+        # Botón de analizar (solo si no está analizado)
+        if not ai_analyzed:
+            analyze_btn = QPushButton("🤖 Analizar con IA")
+            analyze_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['accent_soft']};
+                    color: {COLORS['accent']};
+                    border: 1px solid {COLORS['accent']};
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background-color: {COLORS['accent']};
+                    color: white;
+                }}
+            """)
+            analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            analyze_btn.clicked.connect(self._on_analyze_clicked)
+            layout.addWidget(analyze_btn)
             
         self.setMinimumWidth(320)
-        self.setMinimumHeight(160)
+        self.setMinimumHeight(180 if not ai_analyzed else 160)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+    
+    def _on_analyze_clicked(self):
+        self.analyze_clicked.emit(self.person_id)
 
 
 # Colores para categorías de tareas
@@ -2198,6 +2249,71 @@ class BehaviorAnalysisWorker(QThread):
             
             db.close()
             self.finished.emit(total_alerts)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class PersonAnalysisThread(QThread):
+    """Worker para analizar una persona individual en segundo plano"""
+    finished = pyqtSignal(int, dict)  # person_id, result
+    error = pyqtSignal(str)
+    
+    def __init__(self, api_key: str, person_id: int, person_name: str, messages_text: str, db: 'Database'):
+        super().__init__()
+        self.api_key = api_key
+        self.person_id = person_id
+        self.person_name = person_name
+        self.messages_text = messages_text
+        self.db_path = db.db_path if hasattr(db, 'db_path') else 'telegram_analyzer.db'
+        
+    def run(self):
+        try:
+            analyzer = AIAnalyzer(api_key=self.api_key)
+            
+            # Analizar rol y skills
+            prompt = f"""Analiza los siguientes mensajes de {self.person_name} y extrae:
+
+1. ROL: ¿Qué rol tiene esta persona? (profesor, alumno, colaborador, cliente, manager, desconocido)
+2. SKILLS: Lista de habilidades detectadas con nivel estimado (1-100)
+3. PATRONES: Patrones de comportamiento observados
+
+Mensajes:
+{self.messages_text[:8000]}
+
+Responde en JSON con este formato:
+{{
+    "role": "rol_detectado",
+    "role_confidence": 0.8,
+    "skills": [
+        {{"name": "skill1", "level": 70}},
+        {{"name": "skill2", "level": 50}}
+    ],
+    "patterns": [
+        {{
+            "type": "comunicacion",
+            "description": "Descripción del patrón",
+            "frequency": "frequent",
+            "examples": ["ejemplo1", "ejemplo2"]
+        }}
+    ],
+    "summary": "Resumen breve de la persona"
+}}"""
+            
+            result = analyzer._call_ai(prompt)
+            
+            # Intentar parsear JSON
+            try:
+                # Buscar JSON en la respuesta
+                json_match = re.search(r'\{[\s\S]*\}', result)
+                if json_match:
+                    result_dict = json.loads(json_match.group())
+                else:
+                    result_dict = {'role': 'desconocido', 'skills': [], 'patterns': []}
+            except json.JSONDecodeError:
+                result_dict = {'role': 'desconocido', 'skills': [], 'patterns': []}
+            
+            self.finished.emit(self.person_id, result_dict)
+            
         except Exception as e:
             self.error.emit(str(e))
 
@@ -4395,19 +4511,115 @@ class MainWindow(QMainWindow):
             person_data = self.db.get_person_with_skills(person['id'])
             skills = person_data.get('skills', []) if person_data else []
             is_me = me and person['id'] == me['id']
+            ai_analyzed = bool(person.get('ai_analyzed', 0))
             
             card = PersonCard(
                 person['id'], person['name'], person.get('role', 'desconocido'),
                 skills=skills, message_count=person.get('total_messages', 0),
-                is_me=is_me
+                is_me=is_me, ai_analyzed=ai_analyzed
             )
             card.clicked.connect(lambda p=person: self._show_person_detail(p))
+            card.analyze_clicked.connect(self._analyze_person_from_card)
             self.persons_grid.addWidget(card, row, col)
             
             col += 1
             if col >= max_cols:
                 col = 0
                 row += 1
+    
+    def _analyze_person_from_card(self, person_id: int):
+        """Analiza una persona desde el botón de la tarjeta"""
+        person = self.db.get_person(person_id)
+        if not person:
+            return
+        
+        # Verificar API key
+        api_key = self.api_key_input.text() or os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            QMessageBox.warning(
+                self, "API Key requerida",
+                "Configura tu API key en Configuración para usar el análisis con IA."
+            )
+            self._navigate_to(5)  # Ir a configuración
+            return
+        
+        # Obtener mensajes de la persona
+        messages = self.db.get_messages_for_person(person_id)
+        if not messages:
+            QMessageBox.warning(self, "Sin mensajes", f"No hay mensajes de {person['name']} para analizar.")
+            return
+        
+        # Confirmación
+        reply = QMessageBox.question(
+            self, "Confirmar análisis con IA",
+            f"Vas a analizar a {person['name']}:\n\n"
+            f"• {len(messages)} mensajes\n\n"
+            f"Esto consumirá créditos de tu API de IA.\n\n"
+            f"¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Preparar datos para el análisis
+        self.loading_overlay.show_indeterminate(f"Analizando a {person['name']}...")
+        self.loading_overlay.show()
+        QApplication.processEvents()
+        
+        # Crear thread de análisis para esta persona
+        messages_text = "\n".join([f"{person['name']}: {m['content']}" for m in messages if m.get('content')])
+        
+        self.person_analysis_thread = PersonAnalysisThread(
+            api_key, person_id, person['name'], messages_text, self.db
+        )
+        self.person_analysis_thread.finished.connect(self._on_person_analysis_finished)
+        self.person_analysis_thread.error.connect(self._on_person_analysis_error)
+        self.person_analysis_thread.start()
+    
+    def _on_person_analysis_finished(self, person_id: int, result: dict):
+        """Callback cuando termina el análisis de una persona"""
+        self.loading_overlay.hide()
+        
+        # Marcar como analizado
+        self.db.update_person(person_id, ai_analyzed=1, ai_analyzed_at=datetime.now().isoformat())
+        
+        # Actualizar rol si se detectó
+        if result.get('role'):
+            self.db.update_person(person_id, role=result['role'], role_confidence=result.get('role_confidence', 0.8))
+        
+        # Guardar skills
+        if result.get('skills'):
+            for skill in result['skills']:
+                self.db.add_skill(person_id, skill.get('name', skill), skill.get('level', 50))
+        
+        # Guardar patrones de comportamiento
+        if result.get('patterns'):
+            for pattern in result['patterns']:
+                self.db.add_pattern(
+                    person_id,
+                    pattern.get('type', 'general'),
+                    pattern.get('description', ''),
+                    pattern.get('frequency', 'occasional'),
+                    pattern.get('examples', [])
+                )
+        
+        # Recargar datos
+        self._load_data()
+        
+        QMessageBox.information(
+            self, "Análisis completado",
+            f"Análisis de persona completado.\n\n"
+            f"• Rol detectado: {result.get('role', 'No detectado')}\n"
+            f"• Skills: {len(result.get('skills', []))}\n"
+            f"• Patrones: {len(result.get('patterns', []))}"
+        )
+    
+    def _on_person_analysis_error(self, error_msg: str):
+        """Callback cuando hay error en el análisis"""
+        self.loading_overlay.hide()
+        QMessageBox.critical(self, "Error de análisis", f"Error al analizar:\n{error_msg}")
                 
     def _load_tasks(self, status_filter: str = None):
         self._clear_layout(self.tasks_list)
