@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.2.1"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2003,7 +2003,11 @@ class PersonCard(Card):
             skills_layout.addStretch()
             layout.addWidget(skills_container)
         
-        # Botón de analizar (siempre visible, cambia texto si ya analizado)
+        # Fila de botones: Analizar + Eliminar
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(8)
+        
+        # Botón de analizar
         btn_text = "🔄 Re-analizar" if ai_analyzed else "🤖 Analizar con IA"
         btn_color = COLORS['text_muted'] if ai_analyzed else COLORS['accent']
         btn_bg = COLORS['bg_secondary'] if ai_analyzed else COLORS['accent_soft']
@@ -2027,7 +2031,31 @@ class PersonCard(Card):
         """)
         analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         analyze_btn.clicked.connect(self._on_analyze_clicked)
-        layout.addWidget(analyze_btn)
+        buttons_row.addWidget(analyze_btn, 1)
+        
+        # Botón de eliminar (papelera)
+        delete_btn = QPushButton("🗑️")
+        delete_btn.setFixedSize(32, 32)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FEE2E2;
+                color: #DC2626;
+                border: 1px solid #FECACA;
+                border-radius: 6px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #DC2626;
+                color: white;
+                border-color: #DC2626;
+            }
+        """)
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setToolTip("Eliminar persona")
+        delete_btn.clicked.connect(self._on_delete_clicked)
+        buttons_row.addWidget(delete_btn)
+        
+        layout.addLayout(buttons_row)
         
         # Espaciador para empujar contenido arriba
         layout.addStretch()
@@ -2040,6 +2068,9 @@ class PersonCard(Card):
     
     def _on_analyze_clicked(self):
         self.analyze_clicked.emit(self.person_id)
+    
+    def _on_delete_clicked(self):
+        self.delete_clicked.emit(self.person_id, self.name)
 
 
 # Colores para categorías de tareas
