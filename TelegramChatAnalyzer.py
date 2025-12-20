@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.4"
+APP_VERSION = "2.9.5"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2338,6 +2338,64 @@ Responde en JSON con este formato:
                 result_dict = {'role': 'desconocido', 'skills': [], 'patterns': []}
             
             self.finished.emit(self.person_id, result_dict)
+            
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ImportWorker(QThread):
+    """Worker para importar chats en segundo plano sin bloquear la UI"""
+    progress = pyqtSignal(str)  # Mensaje de progreso
+    finished = pyqtSignal(dict)  # Datos combinados
+    error = pyqtSignal(str)
+    
+    def __init__(self, paths: list):
+        super().__init__()
+        self.paths = sorted(paths)  # Ordenar por nombre
+        
+    def run(self):
+        try:
+            parser = TelegramHTMLParser()
+            combined_data = None
+            total_files = len(self.paths)
+            
+            for idx, path in enumerate(self.paths):
+                self.progress.emit(f"Procesando archivo {idx + 1} de {total_files}...")
+                
+                data = parser.parse_file(path)
+                
+                if combined_data is None:
+                    combined_data = data
+                else:
+                    # Combinar mensajes
+                    combined_data['messages'].extend(data['messages'])
+                    combined_data['total_messages'] += data['total_messages']
+                    
+                    # Combinar participantes
+                    for name, info in data['participants'].items():
+                        if name in combined_data['participants']:
+                            combined_data['participants'][name]['message_count'] += info['message_count']
+                        else:
+                            combined_data['participants'][name] = info
+                    
+                    # Combinar enlaces
+                    existing_urls = {link['url'] for link in combined_data.get('links', [])}
+                    for link in data.get('links', []):
+                        if link['url'] not in existing_urls:
+                            combined_data.setdefault('links', []).append(link)
+                            existing_urls.add(link['url'])
+                        else:
+                            # Incrementar contador si ya existe
+                            for existing_link in combined_data['links']:
+                                if existing_link['url'] == link['url']:
+                                    existing_link['count'] += link['count']
+                                    break
+            
+            # Añadir info adicional
+            combined_data['total_files'] = total_files
+            combined_data['first_path'] = self.paths[0]
+            
+            self.finished.emit(combined_data)
             
         except Exception as e:
             self.error.emit(str(e))
@@ -4839,69 +4897,57 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         
-        # Ordenar archivos por nombre para procesar en orden (messages.html, messages2.html, etc.)
-        paths = sorted(paths)
-            
+        # Mostrar overlay de carga
+        self.loading_overlay.show_indeterminate(f"Importando {len(paths)} archivo(s)...")
+        self.loading_overlay.show()
+        
+        # Crear worker para importación en segundo plano
+        self.import_worker = ImportWorker(paths)
+        self.import_worker.progress.connect(self._on_import_progress)
+        self.import_worker.finished.connect(self._on_import_finished)
+        self.import_worker.error.connect(self._on_import_error)
+        self.import_worker.start()
+    
+    def _on_import_progress(self, message: str):
+        """Actualiza el mensaje de progreso durante la importación"""
+        self.loading_overlay.show_indeterminate(message)
+    
+    def _on_import_finished(self, combined_data: dict):
+        """Callback cuando termina la importación"""
         try:
-            self.loading_overlay.show_indeterminate(f"Importando {len(paths)} archivo(s)...")
-            self.loading_overlay.show()
-            QApplication.processEvents()
-            
-            parser = TelegramHTMLParser()
-            
-            # Combinar datos de todos los archivos
-            combined_data = None
-            total_files = len(paths)
-            
-            for idx, path in enumerate(paths):
-                self.loading_overlay.show_indeterminate(f"Procesando archivo {idx + 1} de {total_files}...")
-                QApplication.processEvents()
-                
-                data = parser.parse_file(path)
-                
-                if combined_data is None:
-                    combined_data = data
-                else:
-                    # Combinar mensajes
-                    combined_data['messages'].extend(data['messages'])
-                    combined_data['total_messages'] += data['total_messages']
-                    
-                    # Combinar participantes
-                    for name, info in data['participants'].items():
-                        if name in combined_data['participants']:
-                            combined_data['participants'][name]['message_count'] += info['message_count']
-                        else:
-                            combined_data['participants'][name] = info
-                    
-                    # Combinar enlaces
-                    existing_urls = {link['url'] for link in combined_data.get('links', [])}
-                    for link in data.get('links', []):
-                        if link['url'] not in existing_urls:
-                            combined_data.setdefault('links', []).append(link)
-                            existing_urls.add(link['url'])
-                        else:
-                            # Incrementar contador si ya existe
-                            for existing_link in combined_data['links']:
-                                if existing_link['url'] == link['url']:
-                                    existing_link['count'] += link['count']
-                                    break
-            
             self.current_chat_data = combined_data
+            total_files = combined_data.get('total_files', 1)
+            first_path = combined_data.get('first_path', '')
+            
+            self.loading_overlay.show_indeterminate("Guardando en base de datos...")
             
             # Usar el primer path para el nombre del chat
-            chat_id = self.db.add_chat(combined_data['chat_name'], 'group', paths[0])
+            chat_id = self.db.add_chat(combined_data['chat_name'], 'group', first_path)
             
+            # Guardar participantes
             for name, info in combined_data['participants'].items():
                 person_id = self.db.add_person(name)
                 self.db.update_person(person_id, total_messages=info['message_count'])
-                
+            
+            # Guardar mensajes (en lotes para mejor rendimiento)
+            self.loading_overlay.show_indeterminate("Guardando mensajes...")
+            msg_count = 0
+            total_msgs = len(combined_data['messages'])
+            
             for msg in combined_data['messages']:
                 sender = msg.get('sender')
                 if sender and sender in combined_data['participants']:
                     person_id = self.db.add_person(sender)
                     self.db.add_message(chat_id, person_id, msg.get('content', ''), msg.get('timestamp'))
+                msg_count += 1
+                
+                # Actualizar progreso cada 500 mensajes
+                if msg_count % 500 == 0:
+                    self.loading_overlay.show_indeterminate(f"Guardando mensajes... {msg_count}/{total_msgs}")
+                    QApplication.processEvents()
             
             # Guardar enlaces encontrados
+            self.loading_overlay.show_indeterminate("Guardando enlaces...")
             links_count = 0
             for link_data in combined_data.get('links', []):
                 shared_by_id = None
@@ -4912,7 +4958,7 @@ class MainWindow(QMainWindow):
                 
                 self.db.add_link(
                     url=link_data['url'],
-                    link_type='general',  # Se categorizará con IA después
+                    link_type='general',
                     context=link_data['contexts'][0]['message'] if link_data['contexts'] else '',
                     shared_by=shared_by_id,
                     mention_count=link_data['count']
@@ -4922,7 +4968,7 @@ class MainWindow(QMainWindow):
             self.loading_overlay.hide()
             self._load_data()
             
-            # Informar sin sugerir análisis automático (para ahorrar créditos)
+            # Informar sin sugerir análisis automático
             files_text = f"{total_files} archivos" if total_files > 1 else "1 archivo"
             QMessageBox.information(
                 self, "Chat Importado",
@@ -4930,15 +4976,18 @@ class MainWindow(QMainWindow):
                 f"• {combined_data['total_messages']} mensajes\n"
                 f"• {len(combined_data['participants'])} participantes\n"
                 f"• {links_count} enlaces\n\n"
-                f"Para analizar con IA, ve a:\n"
-                f"• Menú Archivo > Analizar con IA (Ctrl+A)\n"
-                f"• Mi Perfil > Alertas > Analizar persona\n\n"
-                f"El análisis con IA consume créditos, úsalo solo cuando lo necesites."
+                f"Para analizar con IA, haz clic en el botón\n"
+                f"'🤖 Analizar con IA' en cada tarjeta de persona."
             )
                 
         except Exception as e:
             self.loading_overlay.hide()
-            QMessageBox.critical(self, "Error", f"Error al importar:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Error al guardar datos:\n{str(e)}")
+    
+    def _on_import_error(self, error_msg: str):
+        """Callback cuando hay error en la importación"""
+        self.loading_overlay.hide()
+        QMessageBox.critical(self, "Error", f"Error al importar:\n{error_msg}")
             
     def _run_ai_analysis(self):
         if not self.current_chat_data:
