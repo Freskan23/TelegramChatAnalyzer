@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.9"
+APP_VERSION = "3.2.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2565,16 +2565,20 @@ class PersonAnalysisThread(QThread):
         try:
             analyzer = AIAnalyzer(api_key=self.api_key)
             
-            # Analizar rol, skills, sentimiento y compromisos
-            prompt = f"""Analiza los siguientes mensajes de {self.person_name} y extrae:
+            # Analizar rol, skills, sentimiento, compromisos, TAREAS, proyectos y alertas
+            prompt = f"""Analiza TODOS los siguientes mensajes de {self.person_name} y extrae:
 
 1. ROL: ¿Qué rol tiene esta persona? (profesor, alumno, colaborador, cliente, manager, desconocido)
-2. SKILLS: Lista de habilidades detectadas con nivel estimado (1-100) y categoría
-3. SENTIMIENTO: Tono general de la comunicación (positive, neutral, negative) y score (-1.0 a 1.0)
+2. SKILLS: Lista de habilidades detectadas con nivel estimado (1-100)
+3. SENTIMIENTO: Tono general (positive, neutral, negative) y score (-1.0 a 1.0)
 4. COMPROMISOS: Promesas, acuerdos o fechas límite mencionadas
+5. TAREAS: Todas las tareas, pendientes, cosas por hacer mencionadas en los mensajes
+6. PROYECTOS: Proyectos o trabajos en los que está involucrado
+7. TIPO DE CLIENTE: Si es cliente, ¿qué tipo? (potencial, activo, recurrente, problemático, etc.)
+8. ALERTAS: Comportamientos problemáticos (inconsistencias, manipulación, abuso de confianza, etc.)
 
 Mensajes:
-{self.messages_text[:12000]}
+{self.messages_text[:50000]}
 
 Responde SOLO con JSON válido en este formato:
 {{
@@ -2582,21 +2586,33 @@ Responde SOLO con JSON válido en este formato:
     "role_confidence": 0.8,
     "sentiment": "positive",
     "sentiment_score": 0.6,
+    "client_type": "activo",
     "skills": [
-        {{"name": "Diseño Web", "level": 85, "category": "técnica"}},
-        {{"name": "Comunicación", "level": 70, "category": "comunicación"}}
+        {{"name": "Diseño Web", "level": 85, "category": "técnica"}}
     ],
     "commitments": [
-        {{"title": "Entregar propuesta", "type": "promise", "due_date": "2024-01-15", "evidence": "Te lo envío mañana"}},
-        {{"title": "Reunión de seguimiento", "type": "agreement", "due_date": null, "evidence": "Quedamos en vernos la próxima semana"}}
+        {{"title": "Entregar propuesta", "type": "promise", "due_date": "2024-01-15", "evidence": "Te lo envío mañana"}}
+    ],
+    "tasks": [
+        {{"title": "Revisar diseño de landing", "status": "pending", "priority": "high", "due_date": null, "evidence": "Mensaje donde se menciona"}},
+        {{"title": "Enviar factura", "status": "completed", "priority": "medium", "due_date": "2024-01-10", "evidence": "Ya te la envié"}}
+    ],
+    "projects": [
+        {{"name": "Rediseño web empresa X", "status": "in_progress", "description": "Descripción breve"}}
+    ],
+    "alerts": [
+        {{"type": "inconsistency", "severity": "medium", "title": "Contradicción en fechas", "description": "Dijo que entregaba el lunes pero luego dijo que el viernes", "evidence": "Mensaje 1... vs Mensaje 2..."}}
     ],
     "summary": "Resumen profesional en 2-3 oraciones"
 }}
 
 IMPORTANTE:
-- Busca TODOS los compromisos, promesas, acuerdos y fechas límite mencionados
-- Si no hay compromisos claros, devuelve un array vacío
-- El sentimiento debe reflejar el tono general de la persona"""
+- Busca TODAS las tareas mencionadas, incluso las completadas
+- Identifica TODOS los proyectos en los que trabaja o ha trabajado
+- Detecta CUALQUIER comportamiento problemático o inconsistencia
+- Los tipos de alerta son: inconsistency, knowledge_abuse, emotional_manipulation, possible_lies, red_flags
+- Las severidades son: high, medium, low
+- Si no encuentras algo, devuelve array vacío []"""
             
             result = analyzer._call_ai(prompt)
             
@@ -5452,6 +5468,61 @@ class MainWindow(QMainWindow):
                 )
                 commitments_count += 1
         
+        # Guardar TAREAS detectadas
+        tasks_count = 0
+        if result.get('tasks'):
+            for task in result['tasks']:
+                try:
+                    self.db.add_task(
+                        title=task.get('title', ''),
+                        description=task.get('evidence', ''),
+                        status=task.get('status', 'pending'),
+                        priority=task.get('priority', 'medium'),
+                        assigned_to=person_id,
+                        due_date=task.get('due_date')
+                    )
+                    tasks_count += 1
+                except Exception as e:
+                    print(f"Error guardando tarea: {e}")
+        
+        # Guardar PROYECTOS detectados
+        projects_count = 0
+        if result.get('projects'):
+            for project in result['projects']:
+                try:
+                    self.db.add_project(
+                        name=project.get('name', ''),
+                        description=project.get('description', ''),
+                        client_id=person_id
+                    )
+                    projects_count += 1
+                except Exception as e:
+                    print(f"Error guardando proyecto: {e}")
+        
+        # Guardar ALERTAS detectadas
+        alerts_count = 0
+        if result.get('alerts'):
+            for alert in result['alerts']:
+                try:
+                    self.db.add_behavior_alert(
+                        person_id=person_id,
+                        alert_type=alert.get('type', 'red_flags'),
+                        severity=alert.get('severity', 'medium'),
+                        title=alert.get('title', ''),
+                        description=alert.get('description', ''),
+                        evidence=alert.get('evidence', '')
+                    )
+                    alerts_count += 1
+                except Exception as e:
+                    print(f"Error guardando alerta: {e}")
+        
+        # Actualizar tipo de cliente si se detectó
+        if result.get('client_type'):
+            try:
+                self.db.update_person(person_id, client_type=result.get('client_type'))
+            except:
+                pass
+        
         # Recargar datos
         self._load_data()
         
@@ -5463,7 +5534,10 @@ class MainWindow(QMainWindow):
             f"• Rol detectado: {result.get('role', 'No detectado')}\n"
             f"• Sentimiento: {sentiment_emoji} {result.get('sentiment', 'neutral')}\n"
             f"• Skills: {len(result.get('skills', []))}\n"
-            f"• Compromisos: {commitments_count}"
+            f"• Compromisos: {commitments_count}\n"
+            f"• Tareas: {tasks_count}\n"
+            f"• Proyectos: {projects_count}\n"
+            f"• Alertas: {alerts_count}"
         )
     
     def _on_person_analysis_error(self, error_msg: str):
