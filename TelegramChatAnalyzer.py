@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.1"
+APP_VERSION = "2.9.2"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3380,7 +3380,7 @@ class MainWindow(QMainWindow):
             controls_card = QFrame()
             controls_card.setStyleSheet(f"""
                 QFrame {{
-                    background-color: {COLORS['card_bg']};
+                    background-color: {COLORS['bg_secondary']};
                     border: 1px solid {COLORS['border']};
                     border-radius: 12px;
                 }}
@@ -4583,38 +4583,80 @@ class MainWindow(QMainWindow):
                 self._clear_layout(item.layout())
                 
     def _import_chat(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar archivo HTML de Telegram", "",
+        # Permitir selección múltiple de archivos HTML
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar archivos HTML de Telegram (puedes seleccionar varios)", "",
             "Archivos HTML (*.html);;Todos los archivos (*.*)"
         )
         
-        if not path:
+        if not paths:
             return
+        
+        # Ordenar archivos por nombre para procesar en orden (messages.html, messages2.html, etc.)
+        paths = sorted(paths)
             
         try:
-            self.loading_overlay.show_indeterminate("Importando chat...")
+            self.loading_overlay.show_indeterminate(f"Importando {len(paths)} archivo(s)...")
             self.loading_overlay.show()
             QApplication.processEvents()
             
             parser = TelegramHTMLParser()
-            data = parser.parse_file(path)
-            self.current_chat_data = data
             
-            chat_id = self.db.add_chat(data['chat_name'], 'group', path)
+            # Combinar datos de todos los archivos
+            combined_data = None
+            total_files = len(paths)
             
-            for name, info in data['participants'].items():
+            for idx, path in enumerate(paths):
+                self.loading_overlay.show_indeterminate(f"Procesando archivo {idx + 1} de {total_files}...")
+                QApplication.processEvents()
+                
+                data = parser.parse_file(path)
+                
+                if combined_data is None:
+                    combined_data = data
+                else:
+                    # Combinar mensajes
+                    combined_data['messages'].extend(data['messages'])
+                    combined_data['total_messages'] += data['total_messages']
+                    
+                    # Combinar participantes
+                    for name, info in data['participants'].items():
+                        if name in combined_data['participants']:
+                            combined_data['participants'][name]['message_count'] += info['message_count']
+                        else:
+                            combined_data['participants'][name] = info
+                    
+                    # Combinar enlaces
+                    existing_urls = {link['url'] for link in combined_data.get('links', [])}
+                    for link in data.get('links', []):
+                        if link['url'] not in existing_urls:
+                            combined_data.setdefault('links', []).append(link)
+                            existing_urls.add(link['url'])
+                        else:
+                            # Incrementar contador si ya existe
+                            for existing_link in combined_data['links']:
+                                if existing_link['url'] == link['url']:
+                                    existing_link['count'] += link['count']
+                                    break
+            
+            self.current_chat_data = combined_data
+            
+            # Usar el primer path para el nombre del chat
+            chat_id = self.db.add_chat(combined_data['chat_name'], 'group', paths[0])
+            
+            for name, info in combined_data['participants'].items():
                 person_id = self.db.add_person(name)
                 self.db.update_person(person_id, total_messages=info['message_count'])
                 
-            for msg in data['messages']:
+            for msg in combined_data['messages']:
                 sender = msg.get('sender')
-                if sender and sender in data['participants']:
+                if sender and sender in combined_data['participants']:
                     person_id = self.db.add_person(sender)
                     self.db.add_message(chat_id, person_id, msg.get('content', ''), msg.get('timestamp'))
             
             # Guardar enlaces encontrados
             links_count = 0
-            for link_data in data.get('links', []):
+            for link_data in combined_data.get('links', []):
                 shared_by_id = None
                 if link_data['shared_by']:
                     person = self.db.get_person_by_name(link_data['shared_by'][0])
@@ -4634,11 +4676,12 @@ class MainWindow(QMainWindow):
             self._load_data()
             
             # Informar sin sugerir análisis automático (para ahorrar créditos)
+            files_text = f"{total_files} archivos" if total_files > 1 else "1 archivo"
             QMessageBox.information(
                 self, "Chat Importado",
-                f"Se importaron:\n\n"
-                f"• {data['total_messages']} mensajes\n"
-                f"• {len(data['participants'])} participantes\n"
+                f"Se importaron ({files_text}):\n\n"
+                f"• {combined_data['total_messages']} mensajes\n"
+                f"• {len(combined_data['participants'])} participantes\n"
                 f"• {links_count} enlaces\n\n"
                 f"Para analizar con IA, ve a:\n"
                 f"• Menú Archivo > Analizar con IA (Ctrl+A)\n"
