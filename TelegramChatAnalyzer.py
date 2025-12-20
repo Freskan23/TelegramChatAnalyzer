@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.5"
+APP_VERSION = "3.1.6"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -3988,27 +3988,37 @@ class MainWindow(QMainWindow):
             
             # === LISTA DE ALERTAS ===
             if all_alerts:
-                # DEBUG: Imprimir datos de alertas
-                print(f"\n=== DEBUG ALERTAS ===")
-                for i, a in enumerate(all_alerts[:3]):
-                    print(f"Alerta {i+1}: id={a.get('id')}, type={a.get('alert_type')}, severity={a.get('severity')}")
-                    print(f"  title={repr(a.get('title'))}")
-                    print(f"  description={repr(a.get('description')[:50] if a.get('description') else None)}")
-                    print(f"  person_name={repr(a.get('person_name'))}")
-                print(f"=== FIN DEBUG ===\n")
-                
                 # Ordenar por severidad: high > medium > low
                 severity_order = {'high': 0, 'medium': 1, 'low': 2}
                 sorted_alerts = sorted(all_alerts, key=lambda a: severity_order.get(a.get('severity', 'medium'), 1))
                 
-                self.alert_cards_container = QVBoxLayout()
-                self.alert_cards_container.setSpacing(0)
+                # Crear scroll area para las alertas
+                scroll = QScrollArea()
+                scroll.setWidgetResizable(True)
+                scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                scroll.setStyleSheet("""
+                    QScrollArea {
+                        border: none;
+                        background-color: transparent;
+                    }
+                    QScrollArea > QWidget > QWidget {
+                        background-color: transparent;
+                    }
+                """)
+                
+                # Contenedor interno para las tarjetas
+                scroll_content = QWidget()
+                scroll_layout = QVBoxLayout(scroll_content)
+                scroll_layout.setContentsMargins(0, 0, 8, 0)
+                scroll_layout.setSpacing(12)
                 
                 for alert in sorted_alerts:
                     alert_card = self._create_alert_card(alert)
-                    self.alert_cards_container.addWidget(alert_card)
+                    scroll_layout.addWidget(alert_card)
                 
-                layout.addLayout(self.alert_cards_container)
+                scroll_layout.addStretch()
+                scroll.setWidget(scroll_content)
+                layout.addWidget(scroll, 1)  # stretch=1 para que ocupe espacio disponible
             else:
                 # Controles de análisis cuando no hay alertas
                 controls_card = QFrame()
@@ -4129,13 +4139,8 @@ class MainWindow(QMainWindow):
         self._load_profile_tab_content(7)
     
     def _create_alert_card(self, alert: dict) -> QFrame:
-        """Genera widget de alerta usando QWidget puro sin stylesheets complejos"""
-        # Crear contenedor principal
-        container = QFrame()
-        container.setMinimumHeight(120)
-        container.setMaximumHeight(200)
-        
-        # Obtener datos de la alerta
+        """Genera tarjeta de alerta con diseño limpio"""
+        # Obtener datos
         aid = alert.get('id', 0)
         atype = alert.get('alert_type', 'red_flags') or 'red_flags'
         sev = (alert.get('severity', 'medium') or 'medium').lower()
@@ -4144,7 +4149,7 @@ class MainWindow(QMainWindow):
         detalle = alert.get('description', '') or ''
         pid = alert.get('person_id')
         
-        # Si no hay titulo, usar uno generico segun tipo
+        # Titulo por defecto segun tipo
         if not titulo:
             titulos_default = {
                 'inconsistency': 'Se detectaron inconsistencias',
@@ -4158,117 +4163,126 @@ class MainWindow(QMainWindow):
         if not detalle:
             detalle = 'Se ha identificado un patron que podria requerir tu atencion.'
         
-        # Colores segun severidad
+        # Config por severidad
         if sev == 'high':
-            color_fondo = '#FFEBEE'
-            color_borde = '#E53935'
-            texto_badge = 'ALTA'
+            bg_color = '#FEF2F2'
+            border_color = '#DC2626'
+            badge_text = '❗ ALTA'
         elif sev == 'low':
-            color_fondo = '#FFFDE7'
-            color_borde = '#FBC02D'
-            texto_badge = 'BAJA'
+            bg_color = '#FEFCE8'
+            border_color = '#CA8A04'
+            badge_text = '❓ BAJA'
         else:
-            color_fondo = '#FFF3E0'
-            color_borde = '#FB8C00'
-            texto_badge = 'MEDIA'
+            bg_color = '#FFF7ED'
+            border_color = '#EA580C'
+            badge_text = '⚠️ MEDIA'
         
-        # Aplicar fondo y borde al contenedor
-        container.setAutoFillBackground(True)
-        pal = container.palette()
-        pal.setColor(container.backgroundRole(), QColor(color_fondo))
-        container.setPalette(pal)
-        container.setFrameShape(QFrame.Shape.Box)
-        container.setLineWidth(1)
-        container.setStyleSheet(f"border-left: 4px solid {color_borde}; border-radius: 6px;")
+        # Contenedor principal con stylesheet simple
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_color};
+                border: 1px solid #E5E7EB;
+                border-left: 4px solid {border_color};
+                border-radius: 8px;
+                padding: 0px;
+            }}
+        """)
         
-        # Layout principal vertical
-        vbox = QVBoxLayout(container)
-        vbox.setContentsMargins(12, 10, 12, 10)
-        vbox.setSpacing(6)
+        # Layout principal
+        main_layout = QVBoxLayout(card)
+        main_layout.setContentsMargins(16, 14, 16, 14)
+        main_layout.setSpacing(10)
         
-        # -- Linea superior: badge y nombre --
-        linea_sup = QWidget()
-        hbox_sup = QHBoxLayout(linea_sup)
-        hbox_sup.setContentsMargins(0, 0, 0, 0)
-        hbox_sup.setSpacing(10)
+        # === FILA 1: Badge + Tipo + Usuario ===
+        header = QHBoxLayout()
+        header.setSpacing(12)
         
-        # Badge severidad
-        lbl_badge = QLabel(texto_badge)
-        lbl_badge.setFixedHeight(22)
-        font_badge = lbl_badge.font()
-        font_badge.setBold(True)
-        font_badge.setPointSize(9)
-        lbl_badge.setFont(font_badge)
-        lbl_badge.setAutoFillBackground(True)
-        pal_badge = lbl_badge.palette()
-        pal_badge.setColor(lbl_badge.backgroundRole(), QColor(color_borde))
-        pal_badge.setColor(lbl_badge.foregroundRole(), QColor('white'))
-        lbl_badge.setPalette(pal_badge)
-        lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_badge.setFixedWidth(60)
-        hbox_sup.addWidget(lbl_badge)
+        # Badge de severidad
+        badge = QLabel(badge_text)
+        badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {border_color};
+                color: white;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 4px 10px;
+                border-radius: 4px;
+                border: none;
+            }}
+        """)
+        header.addWidget(badge)
         
-        hbox_sup.addStretch()
+        # Tipo de alerta
+        tipo_nombres = {
+            'inconsistency': 'Inconsistencia',
+            'knowledge_abuse': 'Abuso de conocimiento',
+            'emotional_manipulation': 'Manipulacion emocional',
+            'possible_lies': 'Posible mentira',
+            'red_flags': 'Senal de alerta'
+        }
+        tipo_lbl = QLabel(tipo_nombres.get(atype, 'Alerta'))
+        tipo_lbl.setStyleSheet("color: #6B7280; font-size: 12px; border: none; background: transparent;")
+        header.addWidget(tipo_lbl)
         
-        # Nombre persona
-        lbl_quien = QLabel(quien)
-        font_quien = lbl_quien.font()
-        font_quien.setPointSize(10)
-        lbl_quien.setFont(font_quien)
-        pal_quien = lbl_quien.palette()
-        pal_quien.setColor(lbl_quien.foregroundRole(), QColor('#555555'))
-        lbl_quien.setPalette(pal_quien)
-        hbox_sup.addWidget(lbl_quien)
+        header.addStretch()
         
-        vbox.addWidget(linea_sup)
+        # Usuario
+        user_lbl = QLabel(f"👤 {quien}")
+        user_lbl.setStyleSheet("color: #374151; font-size: 12px; border: none; background: transparent;")
+        header.addWidget(user_lbl)
         
-        # -- Titulo --
-        lbl_titulo = QLabel(titulo)
-        font_titulo = lbl_titulo.font()
-        font_titulo.setBold(True)
-        font_titulo.setPointSize(11)
-        lbl_titulo.setFont(font_titulo)
-        lbl_titulo.setWordWrap(True)
-        pal_titulo = lbl_titulo.palette()
-        pal_titulo.setColor(lbl_titulo.foregroundRole(), QColor('#212121'))
-        lbl_titulo.setPalette(pal_titulo)
-        vbox.addWidget(lbl_titulo)
+        main_layout.addLayout(header)
         
-        # -- Descripcion --
-        texto_corto = detalle if len(detalle) <= 120 else detalle[:120] + '...'
-        lbl_desc = QLabel(texto_corto)
-        font_desc = lbl_desc.font()
-        font_desc.setPointSize(10)
-        lbl_desc.setFont(font_desc)
-        lbl_desc.setWordWrap(True)
-        pal_desc = lbl_desc.palette()
-        pal_desc.setColor(lbl_desc.foregroundRole(), QColor('#424242'))
-        lbl_desc.setPalette(pal_desc)
-        vbox.addWidget(lbl_desc)
+        # === FILA 2: Titulo ===
+        title_lbl = QLabel(titulo)
+        title_lbl.setStyleSheet("color: #111827; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+        title_lbl.setWordWrap(True)
+        main_layout.addWidget(title_lbl)
         
-        # -- Botones --
-        linea_btns = QWidget()
-        hbox_btns = QHBoxLayout(linea_btns)
-        hbox_btns.setContentsMargins(0, 4, 0, 0)
-        hbox_btns.setSpacing(8)
+        # === FILA 3: Descripcion ===
+        desc_short = detalle[:180] + '...' if len(detalle) > 180 else detalle
+        desc_lbl = QLabel(desc_short)
+        desc_lbl.setStyleSheet("color: #4B5563; font-size: 13px; border: none; background: transparent;")
+        desc_lbl.setWordWrap(True)
+        main_layout.addWidget(desc_lbl)
+        
+        # === FILA 4: Botones ===
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        
+        btn_style = """
+            QPushButton {
+                background-color: white;
+                color: #374151;
+                border: 1px solid #D1D5DB;
+                padding: 6px 14px;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #F9FAFB;
+                border-color: #9CA3AF;
+            }
+        """
         
         if pid:
-            btn_ver = QPushButton('Ver chat')
-            btn_ver.setFixedHeight(28)
-            btn_ver.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_ver.clicked.connect(lambda: self._view_person_chat(pid))
-            hbox_btns.addWidget(btn_ver)
+            btn_chat = QPushButton('💬 Abrir chat')
+            btn_chat.setStyleSheet(btn_style)
+            btn_chat.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_chat.clicked.connect(lambda checked, p=pid: self._view_person_chat(p))
+            btn_layout.addWidget(btn_chat)
         
-        btn_ok = QPushButton('Marcar revisada')
-        btn_ok.setFixedHeight(28)
-        btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_ok.clicked.connect(lambda: self._dismiss_alert(aid))
-        hbox_btns.addWidget(btn_ok)
+        btn_review = QPushButton('✓ Marcar revisada')
+        btn_review.setStyleSheet(btn_style)
+        btn_review.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_review.clicked.connect(lambda checked, a=aid: self._dismiss_alert(a))
+        btn_layout.addWidget(btn_review)
         
-        hbox_btns.addStretch()
-        vbox.addWidget(linea_btns)
+        btn_layout.addStretch()
+        main_layout.addLayout(btn_layout)
         
-        return container
+        return card
     
     def _get_alert_type_tooltip(self, alert_type: str) -> str:
         """Devuelve tooltip explicativo para cada tipo de alerta"""
