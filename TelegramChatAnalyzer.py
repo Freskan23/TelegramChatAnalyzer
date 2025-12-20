@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.8.0"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2152,6 +2152,56 @@ class AnalysisWorker(QThread):
             self.error.emit(str(e))
 
 
+class BehaviorAnalysisWorker(QThread):
+    """Worker para analizar comportamientos en segundo plano"""
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(int)
+    error = pyqtSignal(str)
+    
+    def __init__(self, api_key: str, persons: List[Dict], me_name: str, db_path: str):
+        super().__init__()
+        self.api_key = api_key
+        self.persons = persons
+        self.me_name = me_name
+        self.db_path = db_path
+        
+    def run(self):
+        try:
+            # Crear conexión a BD en este thread
+            db = Database(self.db_path)
+            analyzer = AIAnalyzer(api_key=self.api_key)
+            
+            total_alerts = 0
+            total_persons = len(self.persons)
+            
+            for i, person in enumerate(self.persons):
+                self.progress.emit(f"Analizando {person['name']} ({i+1}/{total_persons})...")
+                
+                messages = db.get_messages_for_person(person['id'])
+                if len(messages) < 5:
+                    continue
+                
+                alerts = analyzer.detect_behavior_alerts(messages, person['name'], self.me_name)
+                
+                for alert in alerts:
+                    db.add_behavior_alert(
+                        person_id=person['id'],
+                        alert_type=alert.get('alert_type', 'red_flags'),
+                        title=alert.get('title', 'Alerta detectada'),
+                        description=alert.get('description'),
+                        severity=alert.get('severity', 'medium'),
+                        evidence=alert.get('evidence'),
+                        message_examples=json.dumps(alert.get('message_examples', [])),
+                        recommendation=alert.get('recommendation')
+                    )
+                    total_alerts += 1
+            
+            db.close()
+            self.finished.emit(total_alerts)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 # ============================================================
 # VENTANA PRINCIPAL
 # ============================================================
@@ -3317,25 +3367,6 @@ class MainWindow(QMainWindow):
         header.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 18px; font-weight: 700;")
         header_row.addWidget(header)
         header_row.addStretch()
-        
-        # Botón para analizar alertas
-        analyze_btn = QPushButton("🔍 Analizar Comportamientos")
-        analyze_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #EF4444;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #DC2626;
-            }
-        """)
-        analyze_btn.clicked.connect(self._analyze_behavior_alerts)
-        header_row.addWidget(analyze_btn)
         layout.addLayout(header_row)
         
         # Descripción
@@ -3343,6 +3374,82 @@ class MainWindow(QMainWindow):
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; margin-bottom: 16px;")
         layout.addWidget(desc)
+        
+        # Controles de análisis
+        controls_card = QFrame()
+        controls_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['card_bg']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 12px;
+            }}
+        """)
+        controls_layout = QVBoxLayout(controls_card)
+        controls_layout.setContentsMargins(16, 16, 16, 16)
+        controls_layout.setSpacing(12)
+        
+        # Fila de selección de persona
+        person_row = QHBoxLayout()
+        person_label = QLabel("👤 Analizar a:")
+        person_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
+        person_row.addWidget(person_label)
+        
+        self.alert_person_combo = QComboBox()
+        self.alert_person_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['bg_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 8px 12px;
+                min-width: 200px;
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        self.alert_person_combo.addItem("👥 Todas las personas", None)
+        persons = self.db.get_all_persons(min_messages=1)
+        for p in persons:
+            if p['name'] != me.get('name', ''):
+                self.alert_person_combo.addItem(p['name'], p['id'])
+        person_row.addWidget(self.alert_person_combo)
+        person_row.addStretch()
+        controls_layout.addLayout(person_row)
+        
+        # Fila de botones
+        btn_row = QHBoxLayout()
+        
+        # Botón analizar seleccionado
+        self.analyze_selected_btn = QPushButton("🔍 Analizar")
+        self.analyze_selected_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3B82F6;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #2563EB;
+            }
+            QPushButton:disabled {
+                background-color: #94A3B8;
+            }
+        """)
+        self.analyze_selected_btn.clicked.connect(self._analyze_selected_person)
+        btn_row.addWidget(self.analyze_selected_btn)
+        
+        # Indicador de progreso (oculto por defecto)
+        self.alert_progress_label = QLabel("")
+        self.alert_progress_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        self.alert_progress_label.hide()
+        btn_row.addWidget(self.alert_progress_label)
+        
+        btn_row.addStretch()
+        controls_layout.addLayout(btn_row)
+        
+        layout.addWidget(controls_card)
+        layout.addSpacing(16)
         
         # Obtener alertas
         alerts = self.db.get_all_alerts(include_dismissed=False)
@@ -3531,8 +3638,8 @@ class MainWindow(QMainWindow):
         self.db.dismiss_alert(alert_id)
         self._load_profile_tab_content(7)  # Recargar pestaña de alertas
     
-    def _analyze_behavior_alerts(self):
-        """Analiza comportamientos problemáticos en todos los chats"""
+    def _analyze_selected_person(self):
+        """Analiza comportamientos de la persona seleccionada o todas en segundo plano"""
         api_key = self.db.get_setting('api_key')
         if not api_key:
             QMessageBox.warning(self, "API Key requerida", 
@@ -3545,58 +3652,66 @@ class MainWindow(QMainWindow):
                 "Selecciona tu usuario en el selector de 'Mi Perfil' primero.")
             return
         
-        reply = QMessageBox.question(self, "Analizar Comportamientos",
-            "Esto analizará los mensajes de cada persona para detectar comportamientos problemáticos.\n\n"
-            "¿Deseas continuar?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        # Obtener persona seleccionada
+        selected_person_id = self.alert_person_combo.currentData()
         
-        if reply != QMessageBox.StandardButton.Yes:
+        if selected_person_id:
+            persons_to_analyze = [self.db.get_person(selected_person_id)]
+            target_name = self.alert_person_combo.currentText()
+        else:
+            persons_to_analyze = [p for p in self.db.get_all_persons(min_messages=5) if p['id'] != me['id']]
+            target_name = "todas las personas"
+        
+        if not persons_to_analyze:
+            QMessageBox.information(self, "Sin datos", "No hay personas para analizar.")
             return
         
-        try:
-            analyzer = AIAnalyzer(api_key)
-            persons = self.db.get_all_persons(min_messages=5)
-            
-            progress = QMessageBox(self)
-            progress.setWindowTitle("Analizando...")
-            progress.setText("Analizando comportamientos...")
-            progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
-            progress.show()
-            QApplication.processEvents()
-            
-            total_alerts = 0
-            for person in persons:
-                if person['id'] == me['id']:
-                    continue  # No analizar al propio usuario
-                
-                messages = self.db.get_messages_for_person(person['id'])
-                if len(messages) < 5:
-                    continue
-                
-                alerts = analyzer.detect_behavior_alerts(messages, person['name'], me['name'])
-                
-                for alert in alerts:
-                    self.db.add_behavior_alert(
-                        person_id=person['id'],
-                        alert_type=alert.get('alert_type', 'red_flags'),
-                        title=alert.get('title', 'Alerta detectada'),
-                        description=alert.get('description'),
-                        severity=alert.get('severity', 'medium'),
-                        evidence=alert.get('evidence'),
-                        message_examples=json.dumps(alert.get('message_examples', [])),
-                        recommendation=alert.get('recommendation')
-                    )
-                    total_alerts += 1
-            
-            progress.close()
-            
-            QMessageBox.information(self, "Análisis completado",
-                f"Se detectaron {total_alerts} alertas de comportamiento.")
-            
-            self._load_profile_tab_content(7)  # Recargar pestaña de alertas
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al analizar: {str(e)}")
+        # Deshabilitar botón y mostrar progreso
+        self.analyze_selected_btn.setEnabled(False)
+        self.analyze_selected_btn.setText("⏳ Analizando...")
+        self.alert_progress_label.setText(f"Analizando {target_name}...")
+        self.alert_progress_label.show()
+        
+        # Crear worker thread
+        self.alert_worker = BehaviorAnalysisWorker(
+            api_key=api_key,
+            persons=persons_to_analyze,
+            me_name=me['name'],
+            db_path=self.db.db_path
+        )
+        self.alert_worker.progress.connect(self._on_alert_progress)
+        self.alert_worker.finished.connect(self._on_alert_analysis_finished)
+        self.alert_worker.error.connect(self._on_alert_analysis_error)
+        self.alert_worker.start()
+    
+    def _on_alert_progress(self, message: str):
+        """Actualiza el progreso del análisis"""
+        self.alert_progress_label.setText(message)
+    
+    def _on_alert_analysis_finished(self, total_alerts: int):
+        """Callback cuando termina el análisis"""
+        self.analyze_selected_btn.setEnabled(True)
+        self.analyze_selected_btn.setText("🔍 Analizar")
+        self.alert_progress_label.hide()
+        
+        # Notificación
+        QMessageBox.information(self, "✅ Análisis completado",
+            f"Se detectaron {total_alerts} alertas de comportamiento.\n\n"
+            "Puedes seguir trabajando mientras se analizan más personas.")
+        
+        # Recargar pestaña de alertas
+        self._load_profile_tab_content(7)
+    
+    def _on_alert_analysis_error(self, error_msg: str):
+        """Callback cuando hay error en el análisis"""
+        self.analyze_selected_btn.setEnabled(True)
+        self.analyze_selected_btn.setText("🔍 Analizar")
+        self.alert_progress_label.hide()
+        QMessageBox.critical(self, "Error", f"Error al analizar: {error_msg}")
+    
+    def _analyze_behavior_alerts(self):
+        """Método legacy - redirige al nuevo"""
+        self._analyze_selected_person()
     
     def _create_persons_page(self) -> QWidget:
         page = QWidget()
