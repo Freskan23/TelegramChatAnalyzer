@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.8.1"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -767,7 +767,7 @@ class Database:
     
     # === FUNCIONES DE ENLACES ===
     def add_link(self, url: str, title: str = None, link_type: str = 'general', 
-                 context: str = None, shared_by: int = None) -> int:
+                 context: str = None, shared_by: int = None, mention_count: int = 1) -> int:
         # Verificar si ya existe
         self.cursor.execute('SELECT id, mention_count FROM links WHERE url = ?', (url,))
         existing = self.cursor.fetchone()
@@ -780,9 +780,9 @@ class Database:
             return existing['id']
         else:
             self.cursor.execute('''
-                INSERT INTO links (url, title, link_type, context, shared_by)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (url, title, link_type, context, shared_by))
+                INSERT INTO links (url, title, link_type, context, shared_by, mention_count)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (url, title, link_type, context, shared_by, mention_count))
             self.conn.commit()
             return self.cursor.lastrowid
     
