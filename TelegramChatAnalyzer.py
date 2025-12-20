@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.0.3"
+APP_VERSION = "3.0.5"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -1372,23 +1372,30 @@ class AIAnalyzer:
             raise ImportError("Instala openai: pip install openai")
     
     def _call_ai(self, prompt: str, system_prompt: str = None) -> str:
-        if self.provider == "gemini":
-            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=full_prompt
-            )
-            return response.text
-        else:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages
-            )
-            return response.choices[0].message.content
+        try:
+            if self.provider == "gemini":
+                full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=full_prompt
+                )
+                result = response.text
+            else:
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages
+                )
+                result = response.choices[0].message.content
+            
+            # Asegurar que nunca retornamos None
+            return result if result else '{}'
+        except Exception as e:
+            print(f"Error en _call_ai: {e}")
+            return '{}'
     
     def extract_tasks(self, messages: List[Dict]) -> List[TaskExtracted]:
         messages_text = self._format_messages(messages)
@@ -1621,6 +1628,9 @@ IMPORTANTE: Solo incluye alertas con confidence >= 0.6. Mejor pocos alertas cert
         return "\n".join(lines)
     
     def _extract_json(self, text: str) -> str:
+        if not text:
+            return '{}'
+        text = str(text)  # Asegurar que es string
         json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
         if json_match:
             return json_match.group(1).strip()
@@ -2582,15 +2592,19 @@ Responde en JSON con este formato:
             
             result = analyzer._call_ai(prompt)
             
-            # Intentar parsear JSON
+            # Intentar parsear JSON - proteger contra None
             try:
+                if not result:
+                    result = '{}'
+                result = str(result)  # Asegurar que es string
                 # Buscar JSON en la respuesta
                 json_match = re.search(r'\{[\s\S]*\}', result)
                 if json_match:
                     result_dict = json.loads(json_match.group())
                 else:
                     result_dict = {'role': 'desconocido', 'skills': [], 'patterns': []}
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"Error parseando JSON: {e}")
                 result_dict = {'role': 'desconocido', 'skills': [], 'patterns': []}
             
             self.finished.emit(self.person_id, result_dict)
@@ -4025,7 +4039,16 @@ class MainWindow(QMainWindow):
     def _create_alert_card(self, alert: dict) -> QFrame:
         """Crea una tarjeta de alerta de comportamiento"""
         card = QFrame()
-        card.setMinimumHeight(120)  # Altura mínima para asegurar visibilidad
+        card.setMinimumHeight(150)  # Altura mínima para asegurar visibilidad
+        
+        # Extraer datos con valores por defecto
+        alert_type = str(alert.get('alert_type') or 'red_flags')
+        severity = str(alert.get('severity') or 'medium').lower()
+        title_text = str(alert.get('title') or '') or f"Alerta de {alert_type.replace('_', ' ')}"
+        desc_text = str(alert.get('description') or '') or "Se ha detectado un patrón de comportamiento que requiere atención."
+        person_name = str(alert.get('person_name') or 'Desconocido')
+        evidence_text = str(alert.get('evidence') or '')
+        rec_text = str(alert.get('recommendation') or '')
         
         # Color según severidad
         severity_colors = {
@@ -4033,27 +4056,22 @@ class MainWindow(QMainWindow):
             'medium': ('#FFFBEB', '#FDE68A', '#F59E0B', 'Media'),
             'low': ('#F0FDF4', '#BBF7D0', '#10B981', 'Baja')
         }
-        severity = str(alert.get('severity', 'medium') or 'medium').lower()
         colors = severity_colors.get(severity, severity_colors['medium'])
-        bg, border, accent, severity_text = colors
+        bg, border, accent, severity_label = colors
         
         card.setStyleSheet(f"""
-            QFrame {{
+            QFrame#alertCard {{
                 background-color: {bg};
                 border: 2px solid {border};
                 border-left: 5px solid {accent};
                 border-radius: 12px;
-                margin-bottom: 8px;
-                padding: 8px;
-            }}
-            QLabel {{
-                background: transparent;
             }}
         """)
+        card.setObjectName("alertCard")
         
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(20, 16, 20, 16)
-        c_layout.setSpacing(12)
+        c_layout.setSpacing(10)
         
         # Header con tipo, severidad y botón descartar
         header_row = QHBoxLayout()
@@ -4075,32 +4093,22 @@ class MainWindow(QMainWindow):
             'red_flags': 'Señal de alerta'
         }
         
-        alert_type = str(alert.get('alert_type', 'red_flags') or 'red_flags')
         type_icon = type_icons.get(alert_type, '⚠️')
         type_name = type_names.get(alert_type, 'Alerta')
         
         type_label = QLabel(f"{type_icon} {type_name.upper()}")
-        type_label.setStyleSheet(f"""
-            color: {accent};
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        """)
+        type_label.setStyleSheet(f"color: {accent}; font-size: 13px; font-weight: 700;")
         header_row.addWidget(type_label)
         
         # Badge de severidad
-        severity_badge = QLabel(f"● {severity_text}")
-        severity_badge.setStyleSheet(f"""
-            color: {accent};
-            font-size: 12px;
-            font-weight: 600;
-        """)
+        severity_badge = QLabel(f"● {severity_label}")
+        severity_badge.setStyleSheet(f"color: {accent}; font-size: 12px; font-weight: 600;")
         header_row.addWidget(severity_badge)
         
         header_row.addStretch()
         
         # Persona afectada
-        person_label = QLabel(f"👤 {alert.get('person_name', 'Desconocido')}")
+        person_label = QLabel(f"👤 {person_name}")
         person_label.setStyleSheet(f"""
             color: {COLORS['text_secondary']};
             font-size: 13px;
@@ -4136,8 +4144,7 @@ class MainWindow(QMainWindow):
         separator.setStyleSheet(f"background-color: {border};")
         c_layout.addWidget(separator)
         
-        # Título de la alerta
-        title_text = str(alert.get('title', 'Alerta') or 'Alerta detectada')
+        # Título de la alerta (ya extraído arriba con valor por defecto)
         title = QLabel(title_text)
         title.setStyleSheet(f"""
             color: {COLORS['text_primary']};
@@ -4148,9 +4155,8 @@ class MainWindow(QMainWindow):
         title.setWordWrap(True)
         c_layout.addWidget(title)
         
-        # Descripción
-        desc_text = str(alert.get('description', '') or '')
-        if desc_text:
+        # Descripción (ya extraída arriba con valor por defecto)
+        if True:  # Siempre mostrar descripción
             desc = QLabel(desc_text)
             desc.setWordWrap(True)
             desc.setStyleSheet(f"""
@@ -4160,8 +4166,7 @@ class MainWindow(QMainWindow):
             """)
             c_layout.addWidget(desc)
         
-        # Evidencia (cita del mensaje)
-        evidence_text = str(alert.get('evidence', '') or '')
+        # Evidencia (cita del mensaje) - ya extraída arriba
         if evidence_text:
             evidence_frame = QFrame()
             evidence_frame.setStyleSheet(f"""
@@ -4195,8 +4200,7 @@ class MainWindow(QMainWindow):
             
             c_layout.addWidget(evidence_frame)
         
-        # Recomendación
-        rec_text = str(alert.get('recommendation', '') or '')
+        # Recomendación - ya extraída arriba
         if rec_text:
             rec_frame = QFrame()
             rec_frame.setStyleSheet(f"""
@@ -5283,13 +5287,31 @@ class MainWindow(QMainWindow):
         self.loading_overlay.show()
         QApplication.processEvents()
         
-        # Crear thread de análisis para esta persona - filtrar mensajes vacíos
-        valid_messages = [m for m in messages if m.get('content') and str(m.get('content', '')).strip()]
+        # Crear thread de análisis para esta persona - filtrar mensajes vacíos/None
+        valid_messages = []
+        for m in messages:
+            content = m.get('content')
+            if content is not None and str(content).strip():
+                valid_messages.append(m)
+        
         if not valid_messages:
             self.loading_overlay.hide()
             QMessageBox.warning(self, "Sin contenido", f"Los mensajes de {person['name']} no tienen contenido válido para analizar.")
             return
-        messages_text = "\n".join([f"{person['name']}: {str(m['content'])}" for m in valid_messages])
+        
+        # Construir texto de mensajes con protección extra
+        messages_lines = []
+        for m in valid_messages[:100]:  # Limitar a 100 mensajes
+            content = str(m.get('content', '') or '').strip()
+            if content:
+                messages_lines.append(f"{person['name']}: {content}")
+        
+        if not messages_lines:
+            self.loading_overlay.hide()
+            QMessageBox.warning(self, "Sin contenido", f"No se pudo procesar ningún mensaje de {person['name']}.")
+            return
+            
+        messages_text = "\n".join(messages_lines)
         
         self.person_analysis_thread = PersonAnalysisThread(
             api_key, person_id, person['name'], messages_text, self.db
