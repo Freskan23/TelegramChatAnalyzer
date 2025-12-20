@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.1.3"
+APP_VERSION = "3.1.4"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -4129,11 +4129,11 @@ class MainWindow(QMainWindow):
         self._load_profile_tab_content(7)
     
     def _create_alert_card(self, alert: dict) -> QFrame:
-        """Crea una tarjeta de alerta según el mockup - diseño horizontal"""
+        """Crea una tarjeta de alerta - diseño vertical simple y robusto"""
         card = QFrame()
         card.setObjectName("alertCard")
         
-        # Extraer datos
+        # Extraer datos con debug
         alert_id = alert.get('id', 0)
         alert_type = str(alert.get('alert_type') or 'red_flags')
         severity = str(alert.get('severity') or 'medium').lower()
@@ -4152,118 +4152,109 @@ class MainWindow(QMainWindow):
         
         # Configuración de severidad
         severity_config = {
-            'high': {'bg': '#FEF2F2', 'border': '#FECACA', 'badge_bg': '#DC2626', 'icon': '!', 'label': 'ALTA'},
-            'medium': {'bg': '#FFF7ED', 'border': '#FED7AA', 'badge_bg': '#F97316', 'icon': 'Δ', 'label': 'MEDIA'},
-            'low': {'bg': '#FEFCE8', 'border': '#FEF08A', 'badge_bg': '#EAB308', 'icon': '?', 'label': 'BAJA'}
+            'high': {'bg': '#FEF2F2', 'border': '#DC2626', 'badge_bg': '#DC2626', 'label': '❗ ALTA'},
+            'medium': {'bg': '#FFF7ED', 'border': '#F97316', 'badge_bg': '#F97316', 'label': '⚠️ MEDIA'},
+            'low': {'bg': '#FEFCE8', 'border': '#EAB308', 'badge_bg': '#EAB308', 'label': '❓ BAJA'}
         }
         config = severity_config.get(severity, severity_config['medium'])
         
-        # Estilo de tarjeta - fondo suave con borde izquierdo coloreado
+        # Estilo de tarjeta
         card.setStyleSheet(f"""
             QFrame#alertCard {{
                 background-color: {config['bg']};
                 border: 1px solid {config['border']};
-                border-left: 5px solid {config['badge_bg']};
+                border-left: 5px solid {config['border']};
                 border-radius: 8px;
-                margin-bottom: 8px;
+                margin: 4px 0px;
+            }}
+            QFrame#alertCard QLabel {{
+                background-color: transparent;
             }}
         """)
         
-        # Layout horizontal principal
-        main_layout = QHBoxLayout(card)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        # Layout vertical principal
+        main_layout = QVBoxLayout(card)
+        main_layout.setContentsMargins(16, 12, 16, 12)
+        main_layout.setSpacing(8)
         
-        # === BADGE DE SEVERIDAD (izquierda) ===
-        badge_container = QFrame()
-        badge_container.setFixedWidth(80)
-        badge_container.setStyleSheet("background: transparent;")
-        badge_layout = QVBoxLayout(badge_container)
-        badge_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # === FILA 1: Badge + Usuario ===
+        row1 = QHBoxLayout()
         
-        severity_badge = QLabel(f"{config['icon']}  {config['label']}")
+        # Badge de severidad
+        severity_badge = QLabel(config['label'])
         severity_badge.setStyleSheet(f"""
-            background-color: {config['badge_bg']};
-            color: white;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 6px 10px;
-            border-radius: 6px;
+            QLabel {{
+                background-color: {config['badge_bg']};
+                color: white;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 4px 10px;
+                border-radius: 4px;
+            }}
         """)
-        severity_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_layout.addWidget(severity_badge)
+        row1.addWidget(severity_badge)
+        row1.addStretch()
         
-        main_layout.addWidget(badge_container)
+        # Usuario
+        user_label = QLabel(f"👤 {person_name}")
+        user_label.setStyleSheet("color: #64748B; font-size: 12px;")
+        row1.addWidget(user_label)
         
-        # === CONTENIDO (centro) ===
-        content = QFrame()
-        content.setStyleSheet("background: transparent;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(16, 14, 16, 14)
-        content_layout.setSpacing(4)
+        main_layout.addLayout(row1)
         
-        # Título
-        title = QLabel(title_text)
-        title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 15px; font-weight: 600; background: transparent;")
-        title.setWordWrap(True)
-        content_layout.addWidget(title)
+        # === FILA 2: Título ===
+        title_label = QLabel(title_text)
+        title_label.setStyleSheet("color: #1E293B; font-size: 15px; font-weight: bold;")
+        title_label.setWordWrap(True)
+        main_layout.addWidget(title_label)
         
-        # Descripción breve
-        short_desc = desc_text[:120] + '...' if len(desc_text) > 120 else desc_text
-        desc = QLabel(short_desc)
-        desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; background: transparent;")
-        desc.setWordWrap(True)
-        content_layout.addWidget(desc)
+        # === FILA 3: Descripción ===
+        short_desc = desc_text[:150] + '...' if len(desc_text) > 150 else desc_text
+        desc_label = QLabel(short_desc)
+        desc_label.setStyleSheet("color: #475569; font-size: 13px;")
+        desc_label.setWordWrap(True)
+        main_layout.addWidget(desc_label)
         
-        # Proyecto y Usuario
-        meta = QLabel(f"Proyecto: Chat · Usuario: {person_name}")
-        meta.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px; background: transparent;")
-        content_layout.addWidget(meta)
-        
-        main_layout.addWidget(content, 1)
-        
-        # === BOTONES (derecha) ===
-        buttons = QFrame()
-        buttons.setStyleSheet("background: transparent;")
-        buttons_layout = QHBoxLayout(buttons)
-        buttons_layout.setContentsMargins(0, 0, 16, 0)
-        buttons_layout.setSpacing(8)
+        # === FILA 4: Botones ===
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
         
         person_id = alert.get('person_id')
         if person_id:
             view_btn = QPushButton("💬 Abrir chat")
-            view_btn.setStyleSheet(f"""
-                QPushButton {{
+            view_btn.setStyleSheet("""
+                QPushButton {
                     background-color: white;
-                    color: {COLORS['text_primary']};
-                    border: 1px solid {COLORS['border']};
+                    color: #1E293B;
+                    border: 1px solid #E2E8F0;
                     padding: 8px 14px;
                     border-radius: 6px;
                     font-size: 12px;
-                }}
-                QPushButton:hover {{ background-color: #F3F4F6; }}
+                }
+                QPushButton:hover { background-color: #F1F5F9; }
             """)
             view_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             view_btn.clicked.connect(lambda checked, pid=person_id: self._view_person_chat(pid))
-            buttons_layout.addWidget(view_btn)
+            btn_row.addWidget(view_btn)
         
         review_btn = QPushButton("✓ Marcar como revisada")
-        review_btn.setStyleSheet(f"""
-            QPushButton {{
+        review_btn.setStyleSheet("""
+            QPushButton {
                 background-color: white;
-                color: {COLORS['text_primary']};
-                border: 1px solid {COLORS['border']};
+                color: #1E293B;
+                border: 1px solid #E2E8F0;
                 padding: 8px 14px;
                 border-radius: 6px;
                 font-size: 12px;
-            }}
-            QPushButton:hover {{ background-color: #F3F4F6; }}
+            }
+            QPushButton:hover { background-color: #F1F5F9; }
         """)
         review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         review_btn.clicked.connect(lambda checked, aid=alert_id: self._dismiss_alert(aid))
-        buttons_layout.addWidget(review_btn)
+        btn_row.addWidget(review_btn)
         
-        main_layout.addWidget(buttons)
+        btn_row.addStretch()
+        main_layout.addLayout(btn_row)
         
         return card
     
