@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "3.0.2"
+APP_VERSION = "3.0.3"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -4025,6 +4025,7 @@ class MainWindow(QMainWindow):
     def _create_alert_card(self, alert: dict) -> QFrame:
         """Crea una tarjeta de alerta de comportamiento"""
         card = QFrame()
+        card.setMinimumHeight(120)  # Altura mínima para asegurar visibilidad
         
         # Color según severidad
         severity_colors = {
@@ -4032,7 +4033,8 @@ class MainWindow(QMainWindow):
             'medium': ('#FFFBEB', '#FDE68A', '#F59E0B', 'Media'),
             'low': ('#F0FDF4', '#BBF7D0', '#10B981', 'Baja')
         }
-        colors = severity_colors.get(alert.get('severity', 'medium'), severity_colors['medium'])
+        severity = str(alert.get('severity', 'medium') or 'medium').lower()
+        colors = severity_colors.get(severity, severity_colors['medium'])
         bg, border, accent, severity_text = colors
         
         card.setStyleSheet(f"""
@@ -4042,6 +4044,10 @@ class MainWindow(QMainWindow):
                 border-left: 5px solid {accent};
                 border-radius: 12px;
                 margin-bottom: 8px;
+                padding: 8px;
+            }}
+            QLabel {{
+                background: transparent;
             }}
         """)
         
@@ -4069,7 +4075,7 @@ class MainWindow(QMainWindow):
             'red_flags': 'Señal de alerta'
         }
         
-        alert_type = alert.get('alert_type', 'red_flags')
+        alert_type = str(alert.get('alert_type', 'red_flags') or 'red_flags')
         type_icon = type_icons.get(alert_type, '⚠️')
         type_name = type_names.get(alert_type, 'Alerta')
         
@@ -4131,7 +4137,8 @@ class MainWindow(QMainWindow):
         c_layout.addWidget(separator)
         
         # Título de la alerta
-        title = QLabel(alert.get('title', 'Alerta'))
+        title_text = str(alert.get('title', 'Alerta') or 'Alerta detectada')
+        title = QLabel(title_text)
         title.setStyleSheet(f"""
             color: {COLORS['text_primary']};
             font-size: 16px;
@@ -4142,8 +4149,9 @@ class MainWindow(QMainWindow):
         c_layout.addWidget(title)
         
         # Descripción
-        if alert.get('description'):
-            desc = QLabel(alert['description'])
+        desc_text = str(alert.get('description', '') or '')
+        if desc_text:
+            desc = QLabel(desc_text)
             desc.setWordWrap(True)
             desc.setStyleSheet(f"""
                 color: {COLORS['text_secondary']};
@@ -4153,7 +4161,8 @@ class MainWindow(QMainWindow):
             c_layout.addWidget(desc)
         
         # Evidencia (cita del mensaje)
-        if alert.get('evidence'):
+        evidence_text = str(alert.get('evidence', '') or '')
+        if evidence_text:
             evidence_frame = QFrame()
             evidence_frame.setStyleSheet(f"""
                 QFrame {{
@@ -4174,7 +4183,7 @@ class MainWindow(QMainWindow):
             """)
             e_layout.addWidget(e_label)
             
-            e_text = QLabel(f'"{alert["evidence"]}"')
+            e_text = QLabel(f'"{evidence_text}"')
             e_text.setWordWrap(True)
             e_text.setStyleSheet(f"""
                 color: {COLORS['text_primary']};
@@ -4187,7 +4196,8 @@ class MainWindow(QMainWindow):
             c_layout.addWidget(evidence_frame)
         
         # Recomendación
-        if alert.get('recommendation'):
+        rec_text = str(alert.get('recommendation', '') or '')
+        if rec_text:
             rec_frame = QFrame()
             rec_frame.setStyleSheet(f"""
                 QFrame {{
@@ -4204,15 +4214,15 @@ class MainWindow(QMainWindow):
             rec_icon.setFixedWidth(24)
             rec_layout.addWidget(rec_icon)
             
-            rec_text = QLabel(alert['recommendation'])
-            rec_text.setWordWrap(True)
-            rec_text.setStyleSheet(f"""
+            rec_label = QLabel(rec_text)
+            rec_label.setWordWrap(True)
+            rec_label.setStyleSheet(f"""
                 color: {COLORS['text_primary']};
                 font-size: 13px;
                 font-weight: 500;
                 line-height: 1.4;
             """)
-            rec_layout.addWidget(rec_text, 1)
+            rec_layout.addWidget(rec_label, 1)
             
             c_layout.addWidget(rec_frame)
         
