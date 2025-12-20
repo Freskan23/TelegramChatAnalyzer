@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.3"
+APP_VERSION = "2.9.4"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -1614,109 +1614,129 @@ class PersonCard(Card):
         
     def _setup_ui(self, name: str, role: str, skills: list, message_count: int, is_me: bool, ai_analyzed: bool):
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
         
-        # Header
+        # Header con avatar e info
         header = QHBoxLayout()
+        header.setSpacing(12)
         
-        # Avatar
+        # Avatar (más pequeño)
         role_colors = ROLE_COLORS.get(role.lower(), ROLE_COLORS['desconocido'])
         avatar = QLabel(name[0].upper() if name else "?")
-        avatar.setFixedSize(56, 56)
+        avatar.setFixedSize(48, 48)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setStyleSheet(f"""
             background-color: {role_colors[1]};
             color: {role_colors[0]};
-            border-radius: 28px;
-            font-size: 22px;
+            border-radius: 24px;
+            font-size: 20px;
             font-weight: 700;
         """)
         header.addWidget(avatar)
         
-        # Info
+        # Info container
         info_layout = QVBoxLayout()
         info_layout.setSpacing(4)
         
-        name_layout = QHBoxLayout()
+        # Nombre con badges en fila
+        name_row = QHBoxLayout()
+        name_row.setSpacing(6)
+        
+        # Nombre (con elipsis si es muy largo)
         name_label = QLabel(name)
         name_label.setStyleSheet(f"""
             color: {COLORS['text_primary']};
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 600;
         """)
-        name_layout.addWidget(name_label)
+        name_label.setWordWrap(True)
+        name_label.setMaximumWidth(180)
+        name_row.addWidget(name_label, 1)
+        
+        # Badges en contenedor horizontal
+        badges_layout = QHBoxLayout()
+        badges_layout.setSpacing(4)
         
         if is_me:
             me_badge = QLabel("TÚ")
             me_badge.setStyleSheet(f"""
                 background-color: {COLORS['accent']};
                 color: white;
-                padding: 2px 8px;
+                padding: 2px 6px;
                 border-radius: 4px;
-                font-size: 10px;
+                font-size: 9px;
                 font-weight: 700;
             """)
-            name_layout.addWidget(me_badge)
+            me_badge.setFixedHeight(18)
+            badges_layout.addWidget(me_badge)
         
-        # Indicador de IA analizado
         if ai_analyzed:
             ai_badge = QLabel("✓ IA")
             ai_badge.setStyleSheet(f"""
                 background-color: {COLORS['success_soft']};
                 color: {COLORS['success']};
-                padding: 2px 8px;
+                padding: 2px 6px;
                 border-radius: 4px;
-                font-size: 10px;
+                font-size: 9px;
                 font-weight: 700;
             """)
+            ai_badge.setFixedHeight(18)
             ai_badge.setToolTip("Esta persona ya fue analizada con IA")
-            name_layout.addWidget(ai_badge)
+            badges_layout.addWidget(ai_badge)
         
-        name_layout.addStretch()
-        info_layout.addLayout(name_layout)
+        name_row.addLayout(badges_layout)
+        name_row.addStretch()
+        info_layout.addLayout(name_row)
         
         # Role badge
         role_badge = QLabel(role.capitalize())
         role_badge.setStyleSheet(f"""
             background-color: {role_colors[1]};
             color: {role_colors[0]};
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-size: 12px;
+            padding: 3px 10px;
+            border-radius: 5px;
+            font-size: 11px;
             font-weight: 600;
         """)
-        role_badge.setFixedWidth(role_badge.sizeHint().width() + 8)
+        role_badge.setFixedWidth(role_badge.sizeHint().width() + 6)
         info_layout.addWidget(role_badge)
         
-        header.addLayout(info_layout)
-        header.addStretch()
+        header.addLayout(info_layout, 1)
         layout.addLayout(header)
         
         # Stats
         stats_label = QLabel(f"💬 {message_count} mensajes")
         stats_label.setStyleSheet(f"""
             color: {COLORS['text_secondary']};
-            font-size: 13px;
+            font-size: 12px;
         """)
         layout.addWidget(stats_label)
         
-        # Skills
+        # Skills (con flow layout simulado - wrapping)
         if skills:
-            skills_layout = QHBoxLayout()
-            skills_layout.setSpacing(8)
+            skills_container = QWidget()
+            skills_layout = QHBoxLayout(skills_container)
+            skills_layout.setContentsMargins(0, 0, 0, 0)
+            skills_layout.setSpacing(6)
+            
             for skill in skills[:3]:
-                skill_badge = QLabel(skill.get('name', skill) if isinstance(skill, dict) else skill)
+                skill_name = skill.get('name', skill) if isinstance(skill, dict) else skill
+                # Truncar skill si es muy largo
+                if len(skill_name) > 12:
+                    skill_name = skill_name[:10] + "..."
+                skill_badge = QLabel(skill_name)
                 skill_badge.setStyleSheet(f"""
                     background-color: {COLORS['bg_primary']};
                     color: {COLORS['text_secondary']};
-                    padding: 6px 12px;
-                    border-radius: 8px;
-                    font-size: 12px;
+                    padding: 4px 8px;
+                    border-radius: 6px;
+                    font-size: 11px;
                 """)
+                skill_badge.setToolTip(skill.get('name', skill) if isinstance(skill, dict) else skill)
                 skills_layout.addWidget(skill_badge)
             skills_layout.addStretch()
-            layout.addLayout(skills_layout)
+            layout.addWidget(skills_container)
         
         # Botón de analizar (solo si no está analizado)
         if not ai_analyzed:
@@ -1726,9 +1746,9 @@ class PersonCard(Card):
                     background-color: {COLORS['accent_soft']};
                     color: {COLORS['accent']};
                     border: 1px solid {COLORS['accent']};
-                    border-radius: 8px;
-                    padding: 8px 16px;
-                    font-size: 12px;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 11px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
@@ -1739,9 +1759,14 @@ class PersonCard(Card):
             analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             analyze_btn.clicked.connect(self._on_analyze_clicked)
             layout.addWidget(analyze_btn)
-            
-        self.setMinimumWidth(320)
-        self.setMinimumHeight(180 if not ai_analyzed else 160)
+        
+        # Espaciador para empujar contenido arriba
+        layout.addStretch()
+        
+        # Tamaño mínimo más flexible
+        self.setMinimumWidth(280)
+        self.setMinimumHeight(160 if ai_analyzed else 180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
     
     def _on_analyze_clicked(self):
@@ -4505,7 +4530,13 @@ class MainWindow(QMainWindow):
         self.persons_empty.hide()
         
         me = self.db.get_me()
-        col, row, max_cols = 0, 0, 3
+        # Calcular número de columnas basado en el ancho disponible
+        # Mínimo 1 columna, máximo 4
+        available_width = self.content_stack.width() - 100  # Margen
+        card_width = 300  # Ancho aproximado de tarjeta
+        max_cols = max(1, min(4, available_width // card_width)) if available_width > 0 else 3
+        
+        col, row = 0, 0
         
         for person in persons:
             person_data = self.db.get_person_with_skills(person['id'])
@@ -4526,6 +4557,10 @@ class MainWindow(QMainWindow):
             if col >= max_cols:
                 col = 0
                 row += 1
+        
+        # Configurar stretch para que las columnas se expandan uniformemente
+        for i in range(max_cols):
+            self.persons_grid.setColumnStretch(i, 1)
     
     def _analyze_person_from_card(self, person_id: int):
         """Analiza una persona desde el botón de la tarjeta"""
