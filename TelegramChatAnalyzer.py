@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 # CONFIGURACIÓN DE ACTUALIZACIÓN
 # ============================================================
 
-APP_VERSION = "2.9.6"
+APP_VERSION = "2.9.7"
 GITHUB_REPO = "Freskan23/TelegramChatAnalyzer"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/TelegramChatAnalyzer.py"
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
@@ -2358,6 +2358,7 @@ class ImportWorker(QThread):
         try:
             # Crear conexión a BD en este thread (SQLite requiere conexión por thread)
             db = Database(self.db_path)
+            db.connect()  # Abrir conexión
             
             parser = TelegramHTMLParser()
             combined_data = None
